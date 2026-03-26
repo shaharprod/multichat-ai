@@ -109,6 +109,7 @@ let state = {
     currentConversationId: null,
     apiKeys: {},
     claudeProxy: '',
+    ttsVoice: 'nova',
     isStreaming: false,
     // מעקב הוצאות
     budget: {
@@ -1124,7 +1125,17 @@ function bindEvents() {
     // אתחול זיהוי דיבור
     initSpeechRecognition();
 
-    // טעינת קולות TTS
+    // בורר קולות TTS
+    const ttsSelect = $('#ttsVoiceSelect');
+    if (ttsSelect) {
+        ttsSelect.value = state.ttsVoice || 'nova';
+        ttsSelect.addEventListener('change', () => {
+            state.ttsVoice = ttsSelect.value;
+            saveState();
+        });
+    }
+
+    // טעינת קולות TTS דפדפן
     if (speechSynthesis.onvoiceschanged !== undefined) {
         speechSynthesis.onvoiceschanged = () => {};
     }
@@ -1368,10 +1379,10 @@ async function openAiTTS(text) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: 'tts-1',
+                model: 'gpt-4o-mini-tts',
                 input: text.slice(0, 4096),
-                voice: 'nova',
-                speed: 1.0,
+                voice: state.ttsVoice || 'nova',
+                instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.',
             }),
         });
         if (!res.ok) return false;
@@ -1431,10 +1442,10 @@ async function voiceSpeak(text) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                 body: JSON.stringify({
-                    model: 'tts-1',
+                    model: 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
-                    voice: 'nova',
-                    speed: 1.0,
+                    voice: state.ttsVoice || 'nova',
+                    instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.',
                 }),
             });
             if (res.ok) {
@@ -1562,7 +1573,7 @@ async function speakText(text, button) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({ model: 'tts-1', input: cleanText.slice(0, 4096), voice: 'nova', speed: 1.0 }),
+                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.' }),
             });
             if (res.ok) {
                 const blob = await res.blob();
