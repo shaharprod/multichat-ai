@@ -558,6 +558,19 @@ a:hover { text-decoration: underline; }
     border-top-left-radius: 4px;
 }
 
+.stream-text {
+    direction: rtl;
+    text-align: right;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.streaming-dots {
+    display: inline-flex;
+    margin-top: 4px;
+}
+
 .message-content pre {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
