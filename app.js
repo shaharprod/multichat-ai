@@ -55,11 +55,11 @@ const PROVIDERS = {
     google: {
         name: 'Google Gemini',
         models: [
-            { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '🔥 החכם ביותר, קידוד ואייג\'נטים' },
+            { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: '⭐ מומלץ — מהיר, חינמי, ומשתלם' },
+            { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'הכי זול' },
+            { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '🔥 החכם ביותר (מכסה מוגבלת!)' },
             { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', desc: '⚡ ביצועי שיא במחיר נמוך' },
             { id: 'gemini-3-flash-preview', name: 'Gemini 3.0 Flash', desc: 'ביצועים גבוהים, מהיר' },
-            { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: 'מהיר ומשתלם' },
-            { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'הכי זול' },
             { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', desc: 'חלון 2M טוקנים' },
             { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: 'מאוזן' },
         ],
@@ -628,7 +628,29 @@ async function callGoogle(apiKey, messages) {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `שגיאת Google: ${res.status}`);
+        const errMsg = err.error?.message || '';
+        // Quota exceeded — auto-fallback to gemini-2.0-flash
+        if ((res.status === 429 || errMsg.includes('quota') || errMsg.includes('limit')) && state.model !== 'gemini-2.0-flash') {
+            console.warn(`[MultiChat] מכסה חרגה ב-${state.model}, עובר ל-gemini-2.0-flash`);
+            const prevModel = state.model;
+            state.model = 'gemini-2.0-flash';
+            updateModelDisplay();
+            // Retry with fallback model
+            const retryUrl = `${PROVIDERS.google.endpoint}gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const retryRes = await fetch(retryUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ system_instruction: systemInstruction, contents, generationConfig: { temperature: state.temperature } }),
+            });
+            if (!retryRes.ok) {
+                const retryErr = await retryRes.json().catch(() => ({}));
+                throw new Error(`שגיאת מכסה ב-${prevModel}. גם gemini-2.0-flash נכשל: ${retryErr.error?.message || retryRes.status}`);
+            }
+            const retryData = await retryRes.json();
+            return `⚠️ *${prevModel} חרג ממכסה — הועבר אוטומטית ל-Gemini 2.0 Flash*\n\n` +
+                   (retryData.candidates?.[0]?.content?.parts?.[0]?.text || 'אין תשובה');
+        }
+        throw new Error(errMsg || `שגיאת Google: ${res.status}`);
     }
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || 'אין תשובה';
