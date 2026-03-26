@@ -905,12 +905,19 @@ function bindEvents() {
         if (e.target === dom.budgetModal) closeBudget();
     });
 
-    // מיקרופון
+    // מיקרופון רגיל
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.addEventListener('click', toggleRecording);
 
+    // שיחה קולית
+    const voiceChatBtn = $('#voiceChatBtn');
+    if (voiceChatBtn) voiceChatBtn.addEventListener('click', startVoiceChat);
+    const endVoiceChatBtn = $('#endVoiceChatBtn');
+    if (endVoiceChatBtn) endVoiceChatBtn.addEventListener('click', stopVoiceChat);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            if (voiceChatActive) { stopVoiceChat(); return; }
             closeSettings();
             closeBudget();
             dom.sidebar.classList.remove('open');
@@ -927,9 +934,21 @@ function bindEvents() {
     }
 }
 
-// ── דיבור למיקרופון (STT) ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+//  דיבור למיקרופון (STT) + קריאה קולית (TTS)
+//  + מצב שיחה קולית רציפה (Voice Chat Mode)
+// ══════════════════════════════════════════════════════════════
+
 let recognition = null;
 let isRecording = false;
+
+// ── Voice Chat Mode ─────────────────────────────────────────
+let voiceChatActive = false;
+let voiceSilenceTimer = null;
+let voiceAccumulatedText = '';
+let voiceIsSpeaking = false;
+let voiceUserInterrupted = false;
+const SILENCE_TIMEOUT = 1800; // 1.8 שניות שקט = סיום דיבור
 
 function initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -959,58 +978,232 @@ function initSpeechRecognition() {
             }
         }
 
-        // הצגת טקסט ביניים בזמן אמת
-        if (dom.messageInput) {
-            if (!dom.messageInput.dataset.baseText) {
-                dom.messageInput.dataset.baseText = dom.messageInput.value;
+        // ── מצב שיחה קולית ──
+        if (voiceChatActive) {
+            // המשתמש מדבר — עצור את ה-AI אם הוא מדבר
+            if ((interimTranscript || finalTranscript) && voiceIsSpeaking) {
+                speechSynthesis.cancel();
+                voiceIsSpeaking = false;
+                voiceUserInterrupted = true;
+                updateVoiceChatStatus('מאזין...');
             }
-            if (interimTranscript && !finalTranscript) {
-                dom.messageInput.value = dom.messageInput.dataset.baseText + interimTranscript;
-                dom.charCount.textContent = dom.messageInput.value.length;
+
+            // אפס טיימר שקט בכל דיבור
+            clearTimeout(voiceSilenceTimer);
+
+            if (interimTranscript) {
+                updateVoiceChatStatus('מאזין: ' + (voiceAccumulatedText + interimTranscript).slice(-60));
             }
+
             if (finalTranscript) {
-                dom.messageInput.value = (dom.messageInput.dataset.baseText || '') + finalTranscript;
+                voiceAccumulatedText += finalTranscript + ' ';
+                updateVoiceChatStatus('מאזין: ' + voiceAccumulatedText.slice(-60));
+            }
+
+            // התחל טיימר שקט — אם אין דיבור 1.8 שניות, שלח
+            voiceSilenceTimer = setTimeout(() => {
+                if (voiceChatActive && voiceAccumulatedText.trim()) {
+                    voiceChatSend(voiceAccumulatedText.trim());
+                    voiceAccumulatedText = '';
+                }
+            }, SILENCE_TIMEOUT);
+
+            return;
+        }
+
+        // ── מצב רגיל (לא Voice Chat) ──
+        if (dom.messageInput) {
+            // שמור את הבסיס רק פעם אחת בתחילת ההקלטה
+            if (dom.messageInput.dataset.baseText === undefined || dom.messageInput.dataset.baseText === '') {
+                dom.messageInput.dataset.baseText = dom.messageInput.value || '';
+            }
+            const base = dom.messageInput.dataset.baseText || '';
+
+            if (finalTranscript) {
+                // טקסט סופי — הוסף לבסיס ועדכן
+                dom.messageInput.value = base + finalTranscript;
                 dom.messageInput.dataset.baseText = dom.messageInput.value;
                 dom.sendBtn.disabled = false;
-                dom.charCount.textContent = dom.messageInput.value.length;
+            } else if (interimTranscript) {
+                // טקסט ביניים — הצג אבל אל תשמור לבסיס
+                dom.messageInput.value = base + interimTranscript;
             }
+            dom.charCount.textContent = dom.messageInput.value.length;
         }
     };
 
     recognition.onerror = (event) => {
-        console.warn('שגיאת זיהוי דיבור:', event.error);
-        // no-speech = לא זוהה דיבור — ימשיך אוטומטית ב-onend
-        if (event.error === 'no-speech' || event.error === 'audio-capture') {
-            return;
-        }
-        // שגיאות קריטיות — עצור
+        if (event.error === 'no-speech' || event.error === 'audio-capture') return;
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
             alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
         }
+        if (voiceChatActive) return; // Voice chat ינסה מחדש ב-onend
         stopRecording();
     };
 
     recognition.onend = () => {
-        if (isRecording) {
-            // המשתמש עדיין רוצה להקליט — הפעל מחדש אוטומטית
+        if (isRecording || voiceChatActive) {
             try {
                 setTimeout(() => {
-                    if (isRecording) recognition.start();
+                    if (isRecording || voiceChatActive) recognition.start();
                 }, 200);
             } catch(e) {
                 console.warn('לא ניתן להפעיל מחדש:', e);
-                stopRecording();
+                if (!voiceChatActive) stopRecording();
             }
         }
     };
 }
 
+// ── Voice Chat: שליחה אוטומטית ─────────────────────────────
+async function voiceChatSend(text) {
+    if (!voiceChatActive || !text) return;
+
+    updateVoiceChatStatus('חושב...');
+
+    let conv = getCurrentConversation();
+    if (!conv) conv = createConversation();
+    conv.provider = state.provider;
+    conv.model = state.model;
+
+    const userMsg = { role: 'user', content: text, provider: state.provider };
+    conv.messages.push(userMsg);
+    appendMessageToDOM(userMsg);
+
+    if (conv.messages.length === 1) {
+        conv.title = text.slice(0, 50) + (text.length > 50 ? '...' : '');
+        renderChatHistory();
+    }
+
+    try {
+        const apiKey = state.apiKeys[PROVIDERS[state.provider].keyField];
+        if (!apiKey) throw new Error('לא הוגדר מפתח API');
+
+        const allText = conv.messages.map(m => m.content).join(' ');
+        const inputTokens = estimateTokens(allText);
+
+        let response;
+        switch (state.provider) {
+            case 'openai':     response = await callOpenAI(apiKey, conv.messages); break;
+            case 'google':     response = await callGoogle(apiKey, conv.messages); break;
+            case 'claude':     response = await callClaude(apiKey, conv.messages); break;
+            case 'perplexity': response = await callPerplexity(apiKey, conv.messages); break;
+            case 'grok':       response = await callGrok(apiKey, conv.messages); break;
+        }
+
+        const outputTokens = estimateTokens(response);
+        const cost = trackCost(inputTokens, outputTokens, state.model);
+        conv.totalCost = (conv.totalCost || 0) + cost;
+
+        const aiMsg = { role: 'assistant', content: response, provider: state.provider, inputTokens, outputTokens, cost };
+        conv.messages.push(aiMsg);
+        appendMessageToDOM(aiMsg);
+        renderChatHistory();
+        saveState();
+
+        // דבר את התשובה בקול
+        if (voiceChatActive) {
+            voiceSpeak(response);
+        }
+
+    } catch (error) {
+        updateVoiceChatStatus('שגיאה: ' + error.message);
+        setTimeout(() => {
+            if (voiceChatActive) updateVoiceChatStatus('מאזין...');
+        }, 2000);
+    }
+}
+
+// ── Voice Chat: TTS עם זיהוי הפרעה ────────────────────────
+function voiceSpeak(text) {
+    voiceIsSpeaking = true;
+    voiceUserInterrupted = false;
+    updateVoiceChatStatus('מדבר...');
+
+    const cleanText = text
+        .replace(/<[^>]*>/g, '')
+        .replace(/```[\s\S]*?```/g, ' קוד ')
+        .replace(/`[^`]+`/g, '$1')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/#{1,6}\s/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/\n+/g, '. ');
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'he-IL';
+    utterance.rate = 1.1;
+    utterance.pitch = 1.0;
+
+    const voices = speechSynthesis.getVoices();
+    const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
+    if (hebrewVoice) utterance.voice = hebrewVoice;
+
+    utterance.onend = () => {
+        voiceIsSpeaking = false;
+        if (voiceChatActive && !voiceUserInterrupted) {
+            updateVoiceChatStatus('מאזין...');
+        }
+    };
+
+    utterance.onerror = () => {
+        voiceIsSpeaking = false;
+        if (voiceChatActive) updateVoiceChatStatus('מאזין...');
+    };
+
+    speechSynthesis.speak(utterance);
+}
+
+// ── Voice Chat: UI ─────────────────────────────────────────
+function updateVoiceChatStatus(text) {
+    const statusEl = $('#voiceChatStatus');
+    if (statusEl) statusEl.textContent = text;
+}
+
+function startVoiceChat() {
+    voiceChatActive = true;
+    voiceAccumulatedText = '';
+    voiceIsSpeaking = false;
+
+    // הפעל את המיקרופון
+    if (!isRecording) {
+        isRecording = true;
+        try { recognition.start(); } catch(e) {}
+    }
+
+    // הראה את ממשק השיחה הקולית
+    const overlay = $('#voiceChatOverlay');
+    if (overlay) overlay.classList.add('active');
+    updateVoiceChatStatus('מאזין...');
+}
+
+function stopVoiceChat() {
+    voiceChatActive = false;
+    voiceAccumulatedText = '';
+    clearTimeout(voiceSilenceTimer);
+
+    // עצור TTS
+    if (speechSynthesis.speaking) speechSynthesis.cancel();
+    voiceIsSpeaking = false;
+
+    // עצור מיקרופון
+    isRecording = false;
+    try { recognition.stop(); } catch(e) {}
+
+    // הסתר ממשק
+    const overlay = $('#voiceChatOverlay');
+    if (overlay) overlay.classList.remove('active');
+    const micBtn = $('#micBtn');
+    if (micBtn) micBtn.classList.remove('recording');
+}
+
+// ── מיקרופון רגיל (לא Voice Chat) ──────────────────────────
 function startRecording() {
     if (!recognition) return;
     isRecording = true;
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.classList.add('recording');
-    recognition.lang = 'he-IL'; // ברירת מחדל עברית
+    recognition.lang = 'he-IL';
     recognition.start();
 }
 
@@ -1024,32 +1217,26 @@ function stopRecording() {
 }
 
 function toggleRecording() {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
+    if (isRecording) stopRecording();
+    else startRecording();
 }
 
-// ── קריאה קולית (TTS) ──────────────────────────────────────────
+// ── TTS לכפתור השמע (מצב רגיל) ─────────────────────────────
 let currentUtterance = null;
 
 function speakText(text, button) {
-    // אם כבר מדבר, עצור
     if (speechSynthesis.speaking) {
         speechSynthesis.cancel();
         $$('.tts-btn.speaking').forEach(b => b.classList.remove('speaking'));
-        if (currentUtterance && button.classList.contains('speaking')) {
-            button.classList.remove('speaking');
+        if (button && button.classList.contains('speaking')) {
             currentUtterance = null;
             return;
         }
     }
 
-    // נקה תגיות HTML ותווי Markdown
     const cleanText = text
         .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, '')
+        .replace(/```[\s\S]*?```/g, ' קוד ')
         .replace(/`[^`]+`/g, '')
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
@@ -1061,21 +1248,19 @@ function speakText(text, button) {
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
 
-    // נסה למצוא קול עברי
     const voices = speechSynthesis.getVoices();
     const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
     if (hebrewVoice) utterance.voice = hebrewVoice;
 
-    button.classList.add('speaking');
+    if (button) button.classList.add('speaking');
     currentUtterance = utterance;
 
     utterance.onend = () => {
-        button.classList.remove('speaking');
+        if (button) button.classList.remove('speaking');
         currentUtterance = null;
     };
-
     utterance.onerror = () => {
-        button.classList.remove('speaking');
+        if (button) button.classList.remove('speaking');
         currentUtterance = null;
     };
 
