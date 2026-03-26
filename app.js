@@ -959,22 +959,48 @@ function initSpeechRecognition() {
             }
         }
 
-        if (finalTranscript && dom.messageInput) {
-            dom.messageInput.value += finalTranscript;
-            dom.sendBtn.disabled = false;
-            dom.charCount.textContent = dom.messageInput.value.length;
+        // הצגת טקסט ביניים בזמן אמת
+        if (dom.messageInput) {
+            if (!dom.messageInput.dataset.baseText) {
+                dom.messageInput.dataset.baseText = dom.messageInput.value;
+            }
+            if (interimTranscript && !finalTranscript) {
+                dom.messageInput.value = dom.messageInput.dataset.baseText + interimTranscript;
+                dom.charCount.textContent = dom.messageInput.value.length;
+            }
+            if (finalTranscript) {
+                dom.messageInput.value = (dom.messageInput.dataset.baseText || '') + finalTranscript;
+                dom.messageInput.dataset.baseText = dom.messageInput.value;
+                dom.sendBtn.disabled = false;
+                dom.charCount.textContent = dom.messageInput.value.length;
+            }
         }
     };
 
     recognition.onerror = (event) => {
-        console.error('שגיאת זיהוי דיבור:', event.error);
+        console.warn('שגיאת זיהוי דיבור:', event.error);
+        // no-speech = לא זוהה דיבור — ימשיך אוטומטית ב-onend
+        if (event.error === 'no-speech' || event.error === 'audio-capture') {
+            return;
+        }
+        // שגיאות קריטיות — עצור
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
+        }
         stopRecording();
     };
 
     recognition.onend = () => {
         if (isRecording) {
-            // מפסיק אוטומטית - נעצור
-            stopRecording();
+            // המשתמש עדיין רוצה להקליט — הפעל מחדש אוטומטית
+            try {
+                setTimeout(() => {
+                    if (isRecording) recognition.start();
+                }, 200);
+            } catch(e) {
+                console.warn('לא ניתן להפעיל מחדש:', e);
+                stopRecording();
+            }
         }
     };
 }
@@ -993,6 +1019,7 @@ function stopRecording() {
     isRecording = false;
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.classList.remove('recording');
+    if (dom.messageInput) delete dom.messageInput.dataset.baseText;
     try { recognition.stop(); } catch(e) {}
 }
 
