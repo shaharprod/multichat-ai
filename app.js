@@ -1290,7 +1290,76 @@ function initSpeechRecognition() {
     };
 }
 
-// ── Voice Chat: שליחה אוטומטית ─────────────────────────────
+// ── Voice Chat: שליחה אוטומטית עם סטרימינג + TTS לפי משפטים ──
+// תור TTS — מנגן משפטים אחד אחרי השני בלי להמתין לתשובה מלאה
+const ttsQueue = [];
+let ttsPlaying = false;
+
+async function ttsPlayNext() {
+    if (ttsPlaying || ttsQueue.length === 0) return;
+    ttsPlaying = true;
+
+    const sentence = ttsQueue.shift();
+    const cleanText = cleanForSpeech(sentence);
+    if (!cleanText.trim()) { ttsPlaying = false; ttsPlayNext(); return; }
+
+    const apiKey = state.apiKeys?.openaiKey;
+    if (apiKey) {
+        try {
+            const res = await fetch('https://api.openai.com/v1/audio/speech', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini-tts',
+                    input: cleanText.slice(0, 4096),
+                    voice: state.ttsVoice || 'nova',
+                    instructions: TTS_HEBREW_INSTRUCTIONS,
+                }),
+            });
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                currentAudio = new Audio(url);
+                currentAudio.onended = () => {
+                    currentAudio = null;
+                    URL.revokeObjectURL(url);
+                    ttsPlaying = false;
+                    if (ttsQueue.length > 0) {
+                        ttsPlayNext();
+                    } else {
+                        // סיים לדבר — חזור להאזנה
+                        voiceIsSpeaking = false;
+                        resumeMicAfterSpeaking();
+                        if (voiceChatActive && !voiceUserInterrupted) updateVoiceChatStatus('מַאֲזִין...');
+                    }
+                };
+                currentAudio.onerror = () => {
+                    currentAudio = null;
+                    ttsPlaying = false;
+                    ttsPlayNext();
+                };
+                currentAudio.play();
+                return;
+            }
+        } catch {}
+    }
+
+    // Fallback: דפדפן TTS
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'he-IL';
+    utterance.rate = 1.05;
+    const voices = speechSynthesis.getVoices();
+    const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
+    if (heVoice) utterance.voice = heVoice;
+    utterance.onend = () => {
+        ttsPlaying = false;
+        if (ttsQueue.length > 0) { ttsPlayNext(); }
+        else { voiceIsSpeaking = false; resumeMicAfterSpeaking(); if (voiceChatActive && !voiceUserInterrupted) updateVoiceChatStatus('מַאֲזִין...'); }
+    };
+    utterance.onerror = () => { ttsPlaying = false; ttsPlayNext(); };
+    speechSynthesis.speak(utterance);
+}
+
 async function voiceChatSend(text) {
     if (!voiceChatActive || !text) return;
 
@@ -1319,31 +1388,74 @@ async function voiceChatSend(text) {
         const allText = conv.messages.map(m => m.content).join(' ');
         const inputTokens = estimateTokens(allText);
 
-        let response;
+        // ── סטרימינג + TTS לפי משפטים ──
+        let fullResponse = '';
+        let sentenceBuffer = '';
+        let firstSentenceSpoken = false;
+
+        // איפוס תור TTS
+        ttsQueue.length = 0;
+        ttsPlaying = false;
+        voiceIsSpeaking = true;
+        voiceUserInterrupted = false;
+        pauseMicForSpeaking();
+
+        const onChunk = (chunk) => {
+            fullResponse += chunk;
+            sentenceBuffer += chunk;
+
+            // חפש סוף משפט: . ? ! ׃ \n (עם רווח או סוף)
+            const sentenceEnd = sentenceBuffer.match(/[.?!׃\n]\s*/);
+            if (sentenceEnd) {
+                const idx = sentenceEnd.index + sentenceEnd[0].length;
+                const sentence = sentenceBuffer.slice(0, idx).trim();
+                sentenceBuffer = sentenceBuffer.slice(idx);
+
+                if (sentence.length > 2) {
+                    ttsQueue.push(sentence);
+                    if (!firstSentenceSpoken) {
+                        firstSentenceSpoken = true;
+                        updateVoiceChatStatus('מְדַבֵּר...');
+                        ttsPlayNext();
+                    }
+                }
+            }
+        };
+
+        // קריאת סטרימינג
+        let streamFn;
         switch (state.provider) {
-            case 'openai':     response = await callOpenAI(apiKey, conv.messages); break;
-            case 'google':     response = await callGoogle(apiKey, conv.messages); break;
-            case 'claude':     response = await callClaude(apiKey, conv.messages); break;
-            case 'perplexity': response = await callPerplexity(apiKey, conv.messages); break;
-            case 'grok':       response = await callGrok(apiKey, conv.messages); break;
+            case 'openai':     streamFn = callOpenAIStream; break;
+            case 'google':     streamFn = callGoogleStream; break;
+            case 'claude':     streamFn = callClaudeStream; break;
+            case 'perplexity': streamFn = callPerplexityStream; break;
+            case 'grok':       streamFn = callGrokStream; break;
         }
 
-        const outputTokens = estimateTokens(response);
+        await streamFn(apiKey, conv.messages, onChunk);
+
+        // שלח שארית שלא הסתיימה בנקודה
+        if (sentenceBuffer.trim().length > 2) {
+            ttsQueue.push(sentenceBuffer.trim());
+            if (!firstSentenceSpoken) {
+                updateVoiceChatStatus('מְדַבֵּר...');
+                ttsPlayNext();
+            }
+        }
+
+        const outputTokens = estimateTokens(fullResponse);
         const cost = trackCost(inputTokens, outputTokens, state.model);
         conv.totalCost = (conv.totalCost || 0) + cost;
 
-        const aiMsg = { role: 'assistant', content: response, provider: state.provider, inputTokens, outputTokens, cost };
+        const aiMsg = { role: 'assistant', content: fullResponse, provider: state.provider, inputTokens, outputTokens, cost };
         conv.messages.push(aiMsg);
         appendMessageToDOM(aiMsg);
         renderChatHistory();
         saveState();
 
-        // דבר את התשובה בקול
-        if (voiceChatActive) {
-            voiceSpeak(response);
-        }
-
     } catch (error) {
+        voiceIsSpeaking = false;
+        resumeMicAfterSpeaking();
         updateVoiceChatStatus('שגיאה: ' + error.message);
         setTimeout(() => {
             if (voiceChatActive) updateVoiceChatStatus('מאזין...');
