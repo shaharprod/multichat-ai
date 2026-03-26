@@ -1156,6 +1156,7 @@ let voiceSilenceTimer = null;
 let voiceAccumulatedText = '';
 let voiceIsSpeaking = false;
 let voiceUserInterrupted = false;
+let voiceLiveBubble = null; // בועת תמלול חיה על המסך
 const SILENCE_TIMEOUT = 3000; // 3 שניות שקט = סיום דיבור
 
 function initSpeechRecognition() {
@@ -1200,20 +1201,42 @@ function initSpeechRecognition() {
             // אפס טיימר שקט בכל דיבור
             clearTimeout(voiceSilenceTimer);
 
-            if (interimTranscript) {
-                console.log('[VoiceChat] ביניים:', interimTranscript);
-                updateVoiceChatStatus('מאזין: ' + (voiceAccumulatedText + interimTranscript).slice(-60));
+            // ── בועת תמלול חיה על המסך ──
+            if (!voiceLiveBubble) {
+                voiceLiveBubble = document.createElement('div');
+                voiceLiveBubble.className = 'message user-message';
+                voiceLiveBubble.innerHTML = `
+                    <div class="message-bubble">
+                        <div class="message-content"><span class="live-transcript" dir="rtl"></span><span class="live-interim" style="opacity:0.5"></span></div>
+                    </div>
+                    <div class="message-avatar user-avatar">אני</div>
+                `;
+                dom.messagesContainer.appendChild(voiceLiveBubble);
+                scrollToBottom();
             }
+
+            const liveEl = voiceLiveBubble.querySelector('.live-transcript');
+            const interimEl = voiceLiveBubble.querySelector('.live-interim');
 
             if (finalTranscript) {
                 console.log('[VoiceChat] טקסט סופי:', finalTranscript);
                 voiceAccumulatedText += finalTranscript + ' ';
-                updateVoiceChatStatus('מאזין: ' + voiceAccumulatedText.slice(-60));
             }
+
+            if (liveEl) liveEl.textContent = voiceAccumulatedText;
+            if (interimEl) interimEl.textContent = interimTranscript;
+            scrollToBottom();
+
+            updateVoiceChatStatus('מאזין: ' + (voiceAccumulatedText + interimTranscript).slice(-60));
 
             // התחל טיימר שקט — אם אין דיבור 3 שניות, שלח
             voiceSilenceTimer = setTimeout(() => {
                 if (voiceChatActive && voiceAccumulatedText.trim()) {
+                    // הסר בועה חיה — voiceChatSend ייצור את הבועה הסופית
+                    if (voiceLiveBubble) {
+                        voiceLiveBubble.remove();
+                        voiceLiveBubble = null;
+                    }
                     voiceChatSend(voiceAccumulatedText.trim());
                     voiceAccumulatedText = '';
                 }
@@ -1662,8 +1685,17 @@ function stopVoiceChat() {
     voiceAccumulatedText = '';
     clearTimeout(voiceSilenceTimer);
 
-    // עצור TTS
+    // הסר בועת תמלול חיה
+    if (voiceLiveBubble) {
+        voiceLiveBubble.remove();
+        voiceLiveBubble = null;
+    }
+
+    // עצור TTS ותור TTS
+    stopCurrentAudio();
     if (speechSynthesis.speaking) speechSynthesis.cancel();
+    ttsQueue.length = 0;
+    ttsPlaying = false;
     voiceIsSpeaking = false;
 
     // עצור מיקרופון
