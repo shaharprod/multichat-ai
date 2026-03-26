@@ -38,6 +38,7 @@
     --google-color: #4285f4;
     --claude-color: #d97706;
     --perplexity-color: #22d3ee;
+    --grok-color: #1d9bf0;
 
     /* Sizing */
     --sidebar-width: 300px;
@@ -216,6 +217,7 @@ a:hover { text-decoration: underline; }
 .google-icon { color: var(--google-color); }
 .claude-icon { color: var(--claude-color); }
 .perplexity-icon { color: var(--perplexity-color); }
+.grok-icon { color: var(--grok-color); }
 
 /* ── Inputs ────────────────────────────────────────────────── */
 .select-input {
@@ -532,6 +534,7 @@ a:hover { text-decoration: underline; }
 .message.ai-message .message-avatar.google-avatar { color: var(--google-color); }
 .message.ai-message .message-avatar.claude-avatar { color: var(--claude-color); }
 .message.ai-message .message-avatar.perplexity-avatar { color: var(--perplexity-color); }
+.message.ai-message .message-avatar.grok-avatar { color: var(--grok-color); }
 
 .message-content {
     padding: 12px 16px;
@@ -761,6 +764,7 @@ a:hover { text-decoration: underline; }
 .google-dot { background: var(--google-color); }
 .claude-dot { background: var(--claude-color); }
 .perplexity-dot { background: var(--perplexity-color); }
+.grok-dot { background: var(--grok-color); }
 
 .get-key-link {
     font-size: 0.75rem;
