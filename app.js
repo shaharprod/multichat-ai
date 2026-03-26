@@ -1168,11 +1168,17 @@ function initSpeechRecognition() {
         return;
     }
 
-    recognition = new SpeechRecognition();
-    recognition.lang = 'he-IL';
-    recognition.interimResults = true;
-    recognition.continuous = true;
-    recognition.maxAlternatives = 1;
+    // ── יצירת recognition חדש (נקרא גם ב-rebuild) ──
+    function createRecognition() {
+        const rec = new SpeechRecognition();
+        rec.lang = 'he-IL';
+        rec.interimResults = true;
+        rec.continuous = true;
+        rec.maxAlternatives = 1;
+        return rec;
+    }
+
+    recognition = createRecognition();
 
     recognition.onresult = (event) => {
         let finalTranscript = '';
@@ -1285,43 +1291,75 @@ function initSpeechRecognition() {
         }
     };
 
-    let recognitionRestarting = false;
+    // ── מנגנון restart חכם עם backoff ──
+    let restartTimer = null;
+    let consecutiveAborts = 0;
+    const MAX_ABORTS = 5;
 
-    recognition.onerror = (event) => {
-        console.log('[MultiChat STT] שגיאה:', event.error);
-        if (event.error === 'no-speech' || event.error === 'audio-capture' || event.error === 'aborted') return;
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-            alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
-        }
-        if (voiceChatActive) return; // Voice chat ינסה מחדש ב-onend
-        stopRecording();
-    };
+    function safeRestart() {
+        if (restartTimer) return; // כבר מתוזמן
+        if (!isRecording && !voiceChatActive) return;
 
-    recognition.onend = () => {
-        console.log('[MultiChat STT] onend — isRecording:', isRecording, 'voiceChatActive:', voiceChatActive);
-        if ((isRecording || voiceChatActive) && !recognitionRestarting) {
-            recognitionRestarting = true;
-            setTimeout(() => {
-                recognitionRestarting = false;
-                if (isRecording || voiceChatActive) {
-                    try {
-                        console.log('[MultiChat STT] מפעיל מחדש...');
-                        recognition.start();
-                    } catch(e) {
-                        console.warn('[MultiChat STT] לא ניתן להפעיל מחדש:', e);
-                        // ניסיון נוסף אחרי השהייה ארוכה יותר
-                        setTimeout(() => {
-                            if (isRecording || voiceChatActive) {
-                                try { recognition.start(); } catch(e2) {
-                                    if (!voiceChatActive) stopRecording();
-                                }
-                            }
-                        }, 1000);
-                    }
-                }
-            }, 500);
-        }
-    };
+        // backoff: 300ms, 600ms, 1200ms, 2400ms...
+        const delay = Math.min(300 * Math.pow(2, consecutiveAborts), 5000);
+        console.log(`[MultiChat STT] restart בעוד ${delay}ms (ניסיון ${consecutiveAborts + 1})`);
+
+        restartTimer = setTimeout(() => {
+            restartTimer = null;
+            if (!isRecording && !voiceChatActive) return;
+
+            if (consecutiveAborts >= MAX_ABORTS) {
+                console.warn('[MultiChat STT] יותר מדי כשלונות — בונה recognition חדש');
+                consecutiveAborts = 0;
+                try { recognition.abort(); } catch {}
+                recognition = createRecognition();
+                attachRecognitionHandlers();
+            }
+
+            try {
+                recognition.start();
+                console.log('[MultiChat STT] הופעל מחדש בהצלחה');
+            } catch(e) {
+                console.warn('[MultiChat STT] start נכשל:', e.message);
+                consecutiveAborts++;
+                safeRestart();
+            }
+        }, delay);
+    }
+
+    function attachRecognitionHandlers() {
+        recognition.onresult = onResultHandler;
+
+        recognition.onerror = (event) => {
+            console.log('[MultiChat STT] שגיאה:', event.error);
+            if (event.error === 'aborted' || event.error === 'no-speech' || event.error === 'audio-capture') {
+                if (event.error === 'aborted') consecutiveAborts++;
+                return; // onend יטפל ב-restart
+            }
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
+                stopRecording();
+                return;
+            }
+            if (!voiceChatActive) stopRecording();
+        };
+
+        recognition.onend = () => {
+            console.log('[MultiChat STT] onend — isRecording:', isRecording, 'voiceChatActive:', voiceChatActive);
+            if (isRecording || voiceChatActive) {
+                safeRestart();
+            }
+        };
+
+        recognition.onstart = () => {
+            console.log('[MultiChat STT] התחיל להאזין');
+            consecutiveAborts = 0; // הצלחנו — אפס counter
+        };
+    }
+
+    // שמור reference ל-onresult handler וחבר את כל ה-handlers
+    const onResultHandler = recognition.onresult;
+    attachRecognitionHandlers();
 }
 
 // ── Voice Chat: שליחה אוטומטית עם סטרימינג + TTS לפי משפטים ──
