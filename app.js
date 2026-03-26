@@ -13,7 +13,11 @@ const PRICING = {
     'o1-preview':       { input: 15.00, output: 60.00, name: 'O1 Preview' },
     'o1-mini':          { input: 3.00,  output: 12.00, name: 'O1 Mini' },
     'gpt-3.5-turbo':    { input: 0.50,  output: 1.50,  name: 'GPT-3.5 Turbo' },
-    // Google Gemini
+    // Google Gemini 3.x
+    'gemini-3.1-pro-preview':        { input: 2.00,  output: 12.00, name: 'Gemini 3.1 Pro' },
+    'gemini-3.1-flash-lite-preview': { input: 0.25,  output: 1.50,  name: 'Gemini 3.1 Flash Lite' },
+    'gemini-3-flash-preview':        { input: 0.50,  output: 3.00,  name: 'Gemini 3.0 Flash' },
+    // Google Gemini 2.x
     'gemini-2.0-flash':       { input: 0.10,  output: 0.40,  name: 'Gemini 2.0 Flash' },
     'gemini-2.0-flash-lite':  { input: 0.075, output: 0.30,  name: 'Gemini 2.0 Flash Lite' },
     'gemini-1.5-pro':         { input: 1.25,  output: 5.00,  name: 'Gemini 1.5 Pro' },
@@ -47,6 +51,9 @@ const PROVIDERS = {
     google: {
         name: 'Google Gemini',
         models: [
+            { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '🔥 החכם ביותר, קידוד ואייג\'נטים' },
+            { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', desc: '⚡ ביצועי שיא במחיר נמוך' },
+            { id: 'gemini-3-flash-preview', name: 'Gemini 3.0 Flash', desc: 'ביצועים גבוהים, מהיר' },
             { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: 'מהיר ומשתלם' },
             { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'הכי זול' },
             { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', desc: 'חלון 2M טוקנים' },
