@@ -752,6 +752,46 @@ a:hover { text-decoration: underline; }
 .voice-chat-btn:hover { background: var(--accent); color: white; transform: scale(1.05); }
 .voice-chat-btn .wave-icon { position: absolute; bottom: 2px; right: 2px; opacity: 0.7; width: 12px; height: 12px; }
 
+/* TTS Voice Selector */
+.tts-voice-selector {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.tts-voice-selector select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 6px 24px 6px 8px;
+    font-size: 0.75rem;
+    font-family: inherit;
+    cursor: pointer;
+    direction: rtl;
+    max-width: 120px;
+    transition: all 0.2s;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 6px center;
+}
+
+.tts-voice-selector select:hover {
+    border-color: var(--accent);
+}
+
+.tts-voice-selector select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.tts-voice-selector select option {
+    direction: rtl;
+    padding: 4px 8px;
+}
+
 /* Voice Chat Overlay */
 .voice-chat-overlay {
     position: fixed;
