@@ -1367,7 +1367,35 @@ function cleanForSpeech(text) {
         .replace(/\.\s*\./g, '.');
 }
 
-// ── OpenAI TTS — דיבור איכותי עם תמיכה בניקוד ─────────────
+// ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
+const TTS_HEBREW_INSTRUCTIONS = `You are a native Hebrew speaker reading text with nikud (vowel diacritics). CRITICAL: You MUST pronounce every word EXACTLY according to its nikud marks. The nikud is the ONLY authority for pronunciation — never guess or use default pronunciation.
+Vowel rules:
+- קָמָץ (kamatz) = "a" as in "car". פָּ = "pa", not "po".
+- פַּתָח (patach) = "a" as in "cat". בַּ = "ba".
+- צֵירֵי (tsere) = "e" as in "they". סֵפֶר = "SEfer".
+- סֶגוֹל (segol) = "e" as in "bed". מֶלֶךְ = "MElekh".
+- חִירִיק (chirik) = "i" as in "see". דִּין = "din".
+- חוֹלָם (cholam) = "o" as in "go". שָׁלוֹם = "shaLOM".
+- שׁוּרוּק/קוּבּוּץ (shuruk/kubutz) = "u" as in "blue". שׁוּק = "shuk".
+- שְׁוָא נָע (shva na) = very short "e". בְּ = "be-", not "b". לְ = "le-".
+- שְׁוָא נָח (shva nach) = silent. No vowel sound.
+- דָּגֵשׁ חָזָק doubles the consonant: שַׁבָּת = "shab-BAT".
+- חָטָף vowels: חֲ = short "a", חֱ = short "e", חֳ = short "o".
+Consonant rules:
+- בּ (with dagesh) = "b", ב (without) = "v".
+- כּ (with dagesh) = "k", כ (without) = "kh".
+- פּ (with dagesh) = "p", פ (without) = "f".
+- ת always = "t" in modern Hebrew.
+- ע and א are glottal stops.
+Minimal pairs — MUST distinguish:
+- סֵפֶר "SEfer" (book) vs סָפַר "saFAR" (counted)
+- דָּבָר "daVAR" (thing) vs דִּבֵּר "diBER" (spoke)
+- בָּנָה "baNAH" (built) vs בִּינָה "biNAH" (understanding)
+- עָבַר "aVAR" (passed) vs עוֹבֵר "oVER" (passing)
+- קָרָא "kaRA" (read) vs קוֹרֵא "koRE" (reader)
+Stress: Follow nikud. Milra (last syllable) is default. Mil'el only when nikud indicates it.
+Tone: Warm, natural, conversational. Clear articulation without being robotic. Natural Hebrew prosody.`;
+
 let currentAudio = null;
 
 async function openAiTTS(text) {
@@ -1382,7 +1410,7 @@ async function openAiTTS(text) {
                 model: 'gpt-4o-mini-tts',
                 input: text.slice(0, 4096),
                 voice: state.ttsVoice || 'nova',
-                instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.',
+                instructions: TTS_HEBREW_INSTRUCTIONS,
             }),
         });
         if (!res.ok) return false;
@@ -1445,7 +1473,7 @@ async function voiceSpeak(text) {
                     model: 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
                     voice: state.ttsVoice || 'nova',
-                    instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.',
+                    instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
             if (res.ok) {
@@ -1573,7 +1601,7 @@ async function speakText(text, button) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', instructions: 'דַּבֵּר בְּעִבְרִית טִבְעִית וּבְרוּרָה. הָגֶה אֶת הַנִּקּוּד בְּדִיּוּק. קְצֵב שִׂיחָתִי, חַם וּמְזַמֵּן.' }),
+                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', instructions: TTS_HEBREW_INSTRUCTIONS }),
             });
             if (res.ok) {
                 const blob = await res.blob();
