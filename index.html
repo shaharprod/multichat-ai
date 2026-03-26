@@ -205,6 +205,10 @@
                 <button class="mic-btn" id="micBtn" title="דיבור למיקרופון">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                 </button>
+                <button class="voice-chat-btn" id="voiceChatBtn" title="שיחה קולית רציפה">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="wave-icon"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                </button>
                 <button class="send-btn" id="sendBtn" disabled>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                 </button>
@@ -355,6 +359,28 @@
                 <button class="btn btn-ghost" id="resetCostsBtn">אפס הוצאות</button>
                 <button class="btn btn-primary" id="saveBudgetBtn">שמור</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Voice Chat Overlay -->
+    <div class="voice-chat-overlay" id="voiceChatOverlay">
+        <div class="voice-chat-container">
+            <div class="voice-chat-visual">
+                <div class="voice-rings">
+                    <div class="voice-ring ring-1"></div>
+                    <div class="voice-ring ring-2"></div>
+                    <div class="voice-ring ring-3"></div>
+                    <div class="voice-mic-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4M8 23h8"/></svg>
+                    </div>
+                </div>
+            </div>
+            <div class="voice-chat-status" id="voiceChatStatus">מאזין...</div>
+            <div class="voice-chat-hint">דברו — AI יענה בקול. Esc לסיום</div>
+            <button class="voice-chat-end-btn" id="endVoiceChatBtn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                סיום שיחה
+            </button>
         </div>
     </div>
 
