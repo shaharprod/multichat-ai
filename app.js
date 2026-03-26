@@ -488,6 +488,45 @@ function scrollToBottom() {
     dom.messagesContainer.scrollTop = dom.messagesContainer.scrollHeight;
 }
 
+// ── ניקוד אוטומטי לטקסט עברי (Dicta Nakdan API) ─────────────
+async function addNikud(text) {
+    // בדיקה אם יש תווים עבריים
+    if (!/[\u0590-\u05FF]/.test(text)) return text;
+    // אם כבר יש ניקוד, אל תוסיף
+    if (/[\u05B0-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]/.test(text)) return text;
+    try {
+        const res = await fetch('https://nakdan-5-0.loadbalancer.dicta.org.il/api', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task: 'nakdan', data: text, genre: 'modern', addmorph: false }),
+        });
+        if (!res.ok) return text;
+        const data = await res.json();
+        // Dicta מחזיר מערך של מילים עם ניקוד
+        if (Array.isArray(data)) {
+            return data.map(w => w.nikud || w.word || w).join('');
+        }
+        if (typeof data === 'string') return data;
+        return text;
+    } catch (e) {
+        console.warn('[MultiChat] Dicta nikud failed:', e);
+        return text;
+    }
+}
+
+// עדכון הודעת משתמש עם ניקוד (ברקע)
+async function nikudUserMessage(msgDiv, originalText, conv, msgIndex) {
+    const nikudText = await addNikud(originalText);
+    if (nikudText !== originalText) {
+        const contentEl = msgDiv.querySelector('.message-content');
+        if (contentEl) contentEl.innerHTML = formatMessage(nikudText);
+        // עדכון גם באובייקט ההיסטוריה
+        if (conv && conv.messages[msgIndex]) {
+            conv.messages[msgIndex].content = nikudText;
+        }
+    }
+}
+
 // ── שליחת הודעה ──────────────────────────────────────────────
 async function sendMessage(content) {
     if (state.isStreaming) return;
@@ -495,33 +534,40 @@ async function sendMessage(content) {
     let conv = getCurrentConversation();
     if (!conv) conv = createConversation();
 
-    // Update conversation provider/model
     conv.provider = state.provider;
     conv.model = state.model;
 
     const userMsg = { role: 'user', content, provider: state.provider };
     conv.messages.push(userMsg);
-    appendMessageToDOM(userMsg);
+    const userDiv = appendMessageToDOM(userMsg);
+
+    // ניקוד ברקע לטקסט המשתמש (לא חוסם)
+    const userMsgIdx = conv.messages.length - 1;
+    nikudUserMessage(userDiv, content, conv, userMsgIdx);
 
     if (conv.messages.length === 1) {
         conv.title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
         renderChatHistory();
     }
 
-    // אנימציית הקלדה
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'message ai-message';
-    typingDiv.id = 'typing-indicator';
-    typingDiv.innerHTML = `
-        <div class="message-avatar ${state.provider}-avatar">${PROVIDERS[state.provider].name.slice(0, 2)}</div>
+    // יצירת בועת תשובה עם אלמנט טקסט ריק לסטרימינג
+    const aiDiv = document.createElement('div');
+    aiDiv.className = 'message ai-message';
+    const avatarText = PROVIDERS[state.provider].name.slice(0, 2);
+    aiDiv.innerHTML = `
+        <div class="message-avatar ${state.provider}-avatar">${avatarText}</div>
         <div class="message-bubble">
             <div class="message-content">
-                <div class="typing-indicator"><span></span><span></span><span></span></div>
+                <div class="stream-text" dir="rtl"></div>
+                <div class="typing-indicator streaming-dots"><span></span><span></span><span></span></div>
             </div>
         </div>
     `;
-    dom.messagesContainer.appendChild(typingDiv);
+    dom.messagesContainer.appendChild(aiDiv);
     scrollToBottom();
+
+    const streamEl = aiDiv.querySelector('.stream-text');
+    const dotsEl = aiDiv.querySelector('.streaming-dots');
 
     state.isStreaming = true;
     dom.sendBtn.disabled = true;
@@ -532,55 +578,58 @@ async function sendMessage(content) {
             throw new Error('לא הוגדר מפתח API עבור ' + PROVIDERS[state.provider].name + '. לחצו על "⚙️ הגדרות API" בתפריט.');
         }
 
-        // הערכת טוקנים לקלט
         const allText = conv.messages.map(m => m.content).join(' ');
         const inputTokens = estimateTokens(allText);
 
-        let response;
+        // callback שמעדכן את הטקסט בזמן אמת
+        let fullResponse = '';
+        const onChunk = (chunk) => {
+            fullResponse += chunk;
+            streamEl.innerHTML = formatMarkdown(fullResponse);
+            scrollToBottom();
+        };
+
+        // קריאה עם streaming
         switch (state.provider) {
-            case 'openai':    response = await callOpenAI(apiKey, conv.messages); break;
-            case 'google':    response = await callGoogle(apiKey, conv.messages); break;
-            case 'claude':    response = await callClaude(apiKey, conv.messages); break;
-            case 'perplexity': response = await callPerplexity(apiKey, conv.messages); break;
-            case 'grok':      response = await callGrok(apiKey, conv.messages); break;
+            case 'openai':     await callOpenAIStream(apiKey, conv.messages, onChunk); break;
+            case 'google':     await callGoogleStream(apiKey, conv.messages, onChunk); break;
+            case 'claude':     await callClaudeStream(apiKey, conv.messages, onChunk); break;
+            case 'perplexity': await callPerplexityStream(apiKey, conv.messages, onChunk); break;
+            case 'grok':       await callGrokStream(apiKey, conv.messages, onChunk); break;
         }
 
-        typingDiv.remove();
+        // הסרת נקודות הטעינה
+        dotsEl.remove();
 
-        // הערכת טוקנים לפלט וחישוב עלות
-        const outputTokens = estimateTokens(response);
+        // הוספת כפתור TTS
+        const ttsBtn = document.createElement('button');
+        ttsBtn.className = 'tts-btn';
+        ttsBtn.title = 'הַשְׁמֵעַ';
+        ttsBtn.innerHTML = '🔊';
+        ttsBtn.onclick = () => speakText(fullResponse);
+        aiDiv.querySelector('.message-bubble').appendChild(ttsBtn);
+
+        const outputTokens = estimateTokens(fullResponse);
         const cost = trackCost(inputTokens, outputTokens, state.model);
         conv.totalCost = (conv.totalCost || 0) + cost;
 
         const aiMsg = {
             role: 'assistant',
-            content: response,
+            content: fullResponse,
             provider: state.provider,
             inputTokens,
             outputTokens,
             cost,
         };
         conv.messages.push(aiMsg);
-        appendMessageToDOM(aiMsg);
         renderChatHistory();
 
     } catch (error) {
-        typingDiv.remove();
-
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'message ai-message';
-        errorDiv.innerHTML = `
-            <div class="message-avatar ${state.provider}-avatar">!</div>
-            <div class="message-bubble">
-                <div class="message-content">
-                    <div class="message-error">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-                        ${escapeHtml(error.message)}
-                    </div>
-                </div>
-            </div>
-        `;
-        dom.messagesContainer.appendChild(errorDiv);
+        dotsEl.remove();
+        streamEl.innerHTML = `<div class="message-error">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+            ${escapeHtml(error.message)}
+        </div>`;
     }
 
     state.isStreaming = false;
@@ -589,37 +638,74 @@ async function sendMessage(content) {
     saveState();
 }
 
-// ── OpenAI API ────────────────────────────────────────────────
-async function callOpenAI(apiKey, messages) {
-    const systemMsg = { role: 'system', content: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.' };
+// ── פורמט Markdown בסיסי ─────────────────────────────────────
+function formatMarkdown(text) {
+    return escapeHtml(text)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Streaming API Calls — טֶקְסְט זוֹרֵם בִּזְמַן אֱמֶת
+// ══════════════════════════════════════════════════════════════
+
+const SYSTEM_PROMPT = 'ענה תמיד בעברית עם ניקוד מלא על כל מילה, אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL. חובה: כל תשובה בעברית חייבת לכלול ניקוד (נְקוּדוֹת) על כל המילים.';
+
+// ── Helper: קריאת SSE stream מ-OpenAI-compatible APIs ────────
+async function readOpenAIStream(res, onChunk) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') return;
+            try {
+                const json = JSON.parse(data);
+                const chunk = json.choices?.[0]?.delta?.content || '';
+                if (chunk) onChunk(chunk);
+            } catch {}
+        }
+    }
+}
+
+// ── OpenAI Streaming ─────────────────────────────────────────
+async function callOpenAIStream(apiKey, messages, onChunk) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
     const apiMessages = [systemMsg, ...messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
+        role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
 
     const res = await fetch(PROVIDERS.openai.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature, stream: true }),
     });
-
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `שגיאת OpenAI: ${res.status}`);
+        throw new Error(err.error?.message || `שְׁגִיאַת OpenAI: ${res.status}`);
     }
-    const data = await res.json();
-    return data.choices[0].message.content;
+    await readOpenAIStream(res, onChunk);
 }
 
-// ── Google Gemini API ─────────────────────────────────────────
-async function callGoogle(apiKey, messages) {
-    const systemInstruction = { parts: [{ text: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.' }] };
+// ── Google Gemini Streaming ──────────────────────────────────
+async function callGoogleStream(apiKey, messages, onChunk) {
+    const systemInstruction = { parts: [{ text: SYSTEM_PROMPT }] };
     const contents = messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
     }));
 
-    const url = `${PROVIDERS.google.endpoint}${state.model}:generateContent?key=${apiKey}`;
+    const modelToUse = state.model;
+    const url = `${PROVIDERS.google.endpoint}${modelToUse}:streamGenerateContent?alt=sse&key=${apiKey}`;
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -629,38 +715,43 @@ async function callGoogle(apiKey, messages) {
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const errMsg = err.error?.message || '';
-        // Quota exceeded — auto-fallback to gemini-2.0-flash
+        // Quota exceeded — fallback ל-gemini-2.0-flash
         if ((res.status === 429 || errMsg.includes('quota') || errMsg.includes('limit')) && state.model !== 'gemini-2.0-flash') {
-            console.warn(`[MultiChat] מכסה חרגה ב-${state.model}, עובר ל-gemini-2.0-flash`);
+            console.warn(`[MultiChat] מִכְסָה חָרְגָה בְּ-${state.model}, עוֹבֵר לְ-gemini-2.0-flash`);
             const prevModel = state.model;
             state.model = 'gemini-2.0-flash';
             updateModelDisplay();
-            // Retry with fallback model
-            const retryUrl = `${PROVIDERS.google.endpoint}gemini-2.0-flash:generateContent?key=${apiKey}`;
-            const retryRes = await fetch(retryUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ system_instruction: systemInstruction, contents, generationConfig: { temperature: state.temperature } }),
-            });
-            if (!retryRes.ok) {
-                const retryErr = await retryRes.json().catch(() => ({}));
-                throw new Error(`שגיאת מכסה ב-${prevModel}. גם gemini-2.0-flash נכשל: ${retryErr.error?.message || retryRes.status}`);
-            }
-            const retryData = await retryRes.json();
-            return `⚠️ *${prevModel} חרג ממכסה — הועבר אוטומטית ל-Gemini 2.0 Flash*\n\n` +
-                   (retryData.candidates?.[0]?.content?.parts?.[0]?.text || 'אין תשובה');
+            onChunk(`⚠️ *${prevModel} חָרַג מִמִּכְסָה — הוּעֲבַר אוֹטוֹמָטִית לְ-Gemini 2.0 Flash*\n\n`);
+            return callGoogleStream(apiKey, messages, onChunk);
         }
-        throw new Error(errMsg || `שגיאת Google: ${res.status}`);
+        throw new Error(errMsg || `שְׁגִיאַת Google: ${res.status}`);
     }
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'אין תשובה';
+
+    // Gemini SSE streaming
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+                const json = JSON.parse(line.slice(6));
+                const chunk = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (chunk) onChunk(chunk);
+            } catch {}
+        }
+    }
 }
 
-// ── Claude API ────────────────────────────────────────────────
-async function callClaude(apiKey, messages) {
+// ── Claude Streaming ─────────────────────────────────────────
+async function callClaudeStream(apiKey, messages, onChunk) {
     const apiMessages = messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
+        role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }));
 
     const endpoint = state.claudeProxy || PROVIDERS.claude.endpoint;
@@ -674,61 +765,148 @@ async function callClaude(apiKey, messages) {
         },
         body: JSON.stringify({
             model: state.model,
-            system: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.',
+            system: SYSTEM_PROMPT,
             messages: apiMessages,
             max_tokens: 4096,
             temperature: state.temperature,
+            stream: true,
         }),
     });
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `שגיאת Claude: ${res.status}. ייתכן שנדרש CORS proxy.`);
+        throw new Error(err.error?.message || `שְׁגִיאַת Claude: ${res.status}. יִתָּכֵן שֶׁנִּדְרָשׁ CORS proxy.`);
     }
-    const data = await res.json();
-    return data.content?.[0]?.text || 'אין תשובה';
+
+    // Claude SSE streaming
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+                const json = JSON.parse(line.slice(6));
+                if (json.type === 'content_block_delta' && json.delta?.text) {
+                    onChunk(json.delta.text);
+                }
+            } catch {}
+        }
+    }
 }
 
-// ── Perplexity API ────────────────────────────────────────────
-async function callPerplexity(apiKey, messages) {
-    const systemMsg = { role: 'system', content: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת.' };
+// ── Perplexity Streaming ─────────────────────────────────────
+async function callPerplexityStream(apiKey, messages, onChunk) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
     const apiMessages = [systemMsg, ...messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
+        role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
 
     const res = await fetch(PROVIDERS.perplexity.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature, stream: true }),
     });
-
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `שגיאת Perplexity: ${res.status}`);
+        throw new Error(err.error?.message || `שְׁגִיאַת Perplexity: ${res.status}`);
     }
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || 'אין תשובה';
+    await readOpenAIStream(res, onChunk);
 }
 
-// ── Grok (xAI) API ────────────────────────────────────────────
-async function callGrok(apiKey, messages) {
-    const systemMsg = { role: 'system', content: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.' };
+// ── Grok (xAI) Streaming ────────────────────────────────────
+async function callGrokStream(apiKey, messages, onChunk) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
     const apiMessages = [systemMsg, ...messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
+        role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
 
     const res = await fetch(PROVIDERS.grok.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature, stream: true }),
     });
-
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `שגיאת Grok: ${res.status}`);
+        throw new Error(err.error?.message || `שְׁגִיאַת Grok: ${res.status}`);
     }
+    await readOpenAIStream(res, onChunk);
+}
+
+// ── Non-streaming versions (for Voice Chat) ──────────────────
+async function callGoogle(apiKey, messages) {
+    const systemInstruction = { parts: [{ text: SYSTEM_PROMPT }] };
+    const contents = messages.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }],
+    }));
+    const url = `${PROVIDERS.google.endpoint}${state.model}:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system_instruction: systemInstruction, contents, generationConfig: { temperature: state.temperature } }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `שְׁגִיאַת Google: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'אֵין תְּשׁוּבָה';
+}
+
+async function callOpenAI(apiKey, messages) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
+    const res = await fetch(PROVIDERS.openai.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `שְׁגִיאַת OpenAI: ${res.status}`); }
+    const data = await res.json();
+    return data.choices[0].message.content;
+}
+
+async function callClaude(apiKey, messages) {
+    const apiMessages = messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
+    const endpoint = state.claudeProxy || PROVIDERS.claude.endpoint;
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: state.model, system: SYSTEM_PROMPT, messages: apiMessages, max_tokens: 4096, temperature: state.temperature }),
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `שְׁגִיאַת Claude: ${res.status}`); }
+    const data = await res.json();
+    return data.content?.[0]?.text || 'אֵין תְּשׁוּבָה';
+}
+
+async function callPerplexity(apiKey, messages) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
+    const res = await fetch(PROVIDERS.perplexity.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `שְׁגִיאַת Perplexity: ${res.status}`); }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || 'אֵין תְּשׁוּבָה';
+}
+
+async function callGrok(apiKey, messages) {
+    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
+    const res = await fetch(PROVIDERS.grok.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `שְׁגִיאַת Grok: ${res.status}`); }
     const data = await res.json();
     return data.choices[0].message.content;
 }
