@@ -1173,7 +1173,7 @@ function initSpeechRecognition() {
         const rec = new SpeechRecognition();
         rec.lang = 'he-IL';
         rec.interimResults = true;
-        rec.continuous = true;
+        rec.continuous = false; // continuous=false יציב יותר — restart ידני ב-onend
         rec.maxAlternatives = 1;
         return rec;
     }
@@ -1706,11 +1706,17 @@ function startVoiceChat() {
     voiceAccumulatedText = '';
     voiceIsSpeaking = false;
 
-    // הפעל את המיקרופון
-    if (!isRecording) {
-        isRecording = true;
-        try { recognition.start(); } catch(e) {}
-    }
+    // עצור כל recognition קיים ואז הפעל נקי
+    try { recognition.abort(); } catch {}
+    isRecording = true;
+    setTimeout(() => {
+        try {
+            recognition.start();
+            console.log('[VoiceChat] מיקרופון הופעל');
+        } catch(e) {
+            console.warn('[VoiceChat] שגיאת start:', e.message);
+        }
+    }, 300);
 
     // הראה את ממשק השיחה הקולית
     const overlay = $('#voiceChatOverlay');
@@ -1750,11 +1756,14 @@ function stopVoiceChat() {
 // ── מיקרופון רגיל (לא Voice Chat) ──────────────────────────
 function startRecording() {
     if (!recognition) return;
+    try { recognition.abort(); } catch {}
     isRecording = true;
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.classList.add('recording');
     recognition.lang = 'he-IL';
-    recognition.start();
+    setTimeout(() => {
+        try { recognition.start(); } catch(e) { console.warn('[Mic] start error:', e.message); }
+    }, 300);
 }
 
 function stopRecording() {
