@@ -531,22 +531,21 @@ async function nikudUserMessage(msgDiv, originalText, conv, msgIndex) {
 async function sendMessage(content) {
     if (state.isStreaming) return;
 
+    // ניקוד לטקסט המשתמש לפני הכל
+    const nikudContent = await addNikud(content);
+
     let conv = getCurrentConversation();
     if (!conv) conv = createConversation();
 
     conv.provider = state.provider;
     conv.model = state.model;
 
-    const userMsg = { role: 'user', content, provider: state.provider };
+    const userMsg = { role: 'user', content: nikudContent, provider: state.provider };
     conv.messages.push(userMsg);
-    const userDiv = appendMessageToDOM(userMsg);
-
-    // ניקוד ברקע לטקסט המשתמש (לא חוסם)
-    const userMsgIdx = conv.messages.length - 1;
-    nikudUserMessage(userDiv, content, conv, userMsgIdx);
+    appendMessageToDOM(userMsg);
 
     if (conv.messages.length === 1) {
-        conv.title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
+        conv.title = nikudContent.slice(0, 50) + (nikudContent.length > 50 ? '...' : '');
         renderChatHistory();
     }
 
@@ -651,7 +650,15 @@ function formatMarkdown(text) {
 //  Streaming API Calls — טֶקְסְט זוֹרֵם בִּזְמַן אֱמֶת
 // ══════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = 'ענה תמיד בעברית עם ניקוד מלא על כל מילה, אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL. חובה: כל תשובה בעברית חייבת לכלול ניקוד (נְקוּדוֹת) על כל המילים.';
+const SYSTEM_PROMPT = `ענה תמיד בעברית עם ניקוד מלא (נְקוּדוֹת) על כל מילה ומילה, אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.
+
+חוקי ניקוד חובה:
+1. כל מילה בעברית חייבת ניקוד מלא — כולל תנועות, דגש, שווא, חטפים.
+2. הניקוד חייב להיות מדויק דקדוקית — הוא קובע את פרשנות המילה ומשמעותה.
+   לדוגמה: "סֵפֶר" (book) ≠ "סָפַר" (counted), "דָּבָר" (thing) ≠ "דִּבֵּר" (spoke).
+3. שים לב לניקוד בטקסט של המשתמש — הוא מצביע על המשמעות המדויקת שהמשתמש התכוון אליה.
+4. בתשובתך, השתמש בניקוד שמשקף נכון את ההגייה והמשמעות — כדי שקריאה בקול תהיה נכונה.
+5. אל תדלג על ניקוד אפילו במילים קצרות (גַּם, אֶת, עַל, שֶׁל, הוּא, הִיא).`;
 
 // ── Helper: קריאת SSE stream מ-OpenAI-compatible APIs ────────
 async function readOpenAIStream(res, onChunk) {
@@ -1286,14 +1293,19 @@ function initSpeechRecognition() {
 async function voiceChatSend(text) {
     if (!voiceChatActive || !text) return;
 
-    updateVoiceChatStatus('חושב...');
+    updateVoiceChatStatus('מְנַקֵּד...');
+
+    // ניקוד לטקסט המשתמש לפני הכל
+    const nikudText = await addNikud(text);
+
+    updateVoiceChatStatus('חוֹשֵׁב...');
 
     let conv = getCurrentConversation();
     if (!conv) conv = createConversation();
     conv.provider = state.provider;
     conv.model = state.model;
 
-    const userMsg = { role: 'user', content: text, provider: state.provider };
+    const userMsg = { role: 'user', content: nikudText, provider: state.provider };
     conv.messages.push(userMsg);
     appendMessageToDOM(userMsg);
 
@@ -1345,40 +1357,60 @@ async function voiceChatSend(text) {
 function voiceSpeak(text) {
     voiceIsSpeaking = true;
     voiceUserInterrupted = false;
-    updateVoiceChatStatus('מדבר...');
+    updateVoiceChatStatus('מְדַבֵּר...');
 
+    // ניקוי markdown אבל שימור ניקוד עברי — הניקוד עוזר ל-TTS להגות נכון
     const cleanText = text
         .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, ' קוד ')
+        .replace(/```[\s\S]*?```/g, '. קוֹד. ')
         .replace(/`[^`]+`/g, '$1')
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
         .replace(/#{1,6}\s/g, '')
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/\n+/g, '. ');
+        .replace(/⚠️/g, '')
+        .replace(/\n+/g, '. ')
+        .replace(/\.\s*\./g, '.'); // מנקה נקודות כפולות
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'he-IL';
-    utterance.rate = 1.1;
-    utterance.pitch = 1.0;
+    // פיצול לחלקים קצרים — TTS עובד יותר טוב עם משפטים קצרים
+    const sentences = cleanText.split(/(?<=[.!?،؛])\s+/).filter(s => s.trim());
 
-    const voices = speechSynthesis.getVoices();
-    const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
-    if (hebrewVoice) utterance.voice = hebrewVoice;
-
-    utterance.onend = () => {
-        voiceIsSpeaking = false;
-        if (voiceChatActive && !voiceUserInterrupted) {
-            updateVoiceChatStatus('מאזין...');
+    let sentenceIdx = 0;
+    function speakNext() {
+        if (sentenceIdx >= sentences.length || !voiceChatActive || voiceUserInterrupted) {
+            voiceIsSpeaking = false;
+            if (voiceChatActive && !voiceUserInterrupted) {
+                updateVoiceChatStatus('מַאֲזִין...');
+            }
+            return;
         }
-    };
 
-    utterance.onerror = () => {
-        voiceIsSpeaking = false;
-        if (voiceChatActive) updateVoiceChatStatus('מאזין...');
-    };
+        const utterance = new SpeechSynthesisUtterance(sentences[sentenceIdx]);
+        utterance.lang = 'he-IL';
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
 
-    speechSynthesis.speak(utterance);
+        // בחירת קול עברי — עדיפות ל-Google Hebrew
+        const voices = speechSynthesis.getVoices();
+        const googleHe = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google'));
+        const anyHe = voices.find(v => v.lang.startsWith('he'));
+        if (googleHe) utterance.voice = googleHe;
+        else if (anyHe) utterance.voice = anyHe;
+
+        utterance.onend = () => {
+            sentenceIdx++;
+            speakNext();
+        };
+
+        utterance.onerror = () => {
+            voiceIsSpeaking = false;
+            if (voiceChatActive) updateVoiceChatStatus('מַאֲזִין...');
+        };
+
+        speechSynthesis.speak(utterance);
+    }
+
+    speakNext();
 }
 
 // ── Voice Chat: UI ─────────────────────────────────────────
@@ -1462,23 +1494,29 @@ function speakText(text, button) {
         }
     }
 
+    // ניקוי markdown אבל שימור ניקוד עברי — לקריאה נכונה
     const cleanText = text
         .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, ' קוד ')
-        .replace(/`[^`]+`/g, '')
+        .replace(/```[\s\S]*?```/g, '. קוֹד. ')
+        .replace(/`[^`]+`/g, '$1')
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
         .replace(/#{1,6}\s/g, '')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/⚠️/g, '')
+        .replace(/\n+/g, '. ');
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
 
+    // עדיפות ל-Google Hebrew — תומך טוב יותר בניקוד
     const voices = speechSynthesis.getVoices();
-    const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
-    if (hebrewVoice) utterance.voice = hebrewVoice;
+    const googleHe = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google'));
+    const anyHe = voices.find(v => v.lang.startsWith('he'));
+    if (googleHe) utterance.voice = googleHe;
+    else if (anyHe) utterance.voice = anyHe;
 
     if (button) button.classList.add('speaking');
     currentUtterance = utterance;
