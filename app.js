@@ -31,6 +31,10 @@ const PRICING = {
     'sonar':               { input: 1.00,  output: 1.00,  name: 'Sonar' },
     'sonar-reasoning-pro': { input: 2.00,  output: 8.00,  name: 'Sonar Reasoning Pro' },
     'sonar-reasoning':     { input: 1.00,  output: 5.00,  name: 'Sonar Reasoning' },
+    // xAI Grok
+    'grok-4.20-0309-reasoning':     { input: 2.00, output: 6.00, name: 'Grok 4.20' },
+    'grok-4-1-fast-reasoning':      { input: 0.20, output: 0.50, name: 'Grok 4.1 Fast' },
+    'grok-4-1-fast-non-reasoning':  { input: 0.20, output: 0.50, name: 'Grok 4.1 Fast (No Reason)' },
 };
 
 // ── הגדרת ספקים ומודלים ───────────────────────────────────────
@@ -82,6 +86,16 @@ const PROVIDERS = {
         ],
         endpoint: 'https://api.perplexity.ai/chat/completions',
         keyField: 'perplexityKey',
+    },
+    grok: {
+        name: 'Grok (xAI)',
+        models: [
+            { id: 'grok-4.20-0309-reasoning', name: 'Grok 4.20', desc: '🔥 החכם ביותר, חשיבה מתקדמת' },
+            { id: 'grok-4-1-fast-reasoning', name: 'Grok 4.1 Fast', desc: '⚡ מהיר, חלון 2M, זול מאוד' },
+            { id: 'grok-4-1-fast-non-reasoning', name: 'Grok 4.1 Fast (ישיר)', desc: 'מהיר ללא חשיבה' },
+        ],
+        endpoint: 'https://api.x.ai/v1/chat/completions',
+        keyField: 'grokKey',
     },
 };
 
@@ -519,6 +533,7 @@ async function sendMessage(content) {
             case 'google':    response = await callGoogle(apiKey, conv.messages); break;
             case 'claude':    response = await callClaude(apiKey, conv.messages); break;
             case 'perplexity': response = await callPerplexity(apiKey, conv.messages); break;
+            case 'grok':      response = await callGrok(apiKey, conv.messages); break;
         }
 
         typingDiv.remove();
@@ -665,6 +680,28 @@ async function callPerplexity(apiKey, messages) {
     return data.choices?.[0]?.message?.content || 'אין תשובה';
 }
 
+// ── Grok (xAI) API ────────────────────────────────────────────
+async function callGrok(apiKey, messages) {
+    const systemMsg = { role: 'system', content: 'ענה תמיד בעברית אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.' };
+    const apiMessages = [systemMsg, ...messages.map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.content,
+    }))];
+
+    const res = await fetch(PROVIDERS.grok.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: state.model, messages: apiMessages, temperature: state.temperature }),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `שגיאת Grok: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.choices[0].message.content;
+}
+
 // ── ייצוא ─────────────────────────────────────────────────────
 function exportConversation() {
     const conv = getCurrentConversation();
@@ -699,6 +736,7 @@ function openSettings() {
     $('#googleKey').value = state.apiKeys.googleKey || '';
     $('#claudeKey').value = state.apiKeys.claudeKey || '';
     $('#perplexityKey').value = state.apiKeys.perplexityKey || '';
+    $('#grokKey').value = state.apiKeys.grokKey || '';
     $('#claudeProxy').value = state.claudeProxy || '';
 }
 
@@ -710,6 +748,7 @@ function saveApiKeys() {
         googleKey: $('#googleKey').value.trim(),
         claudeKey: $('#claudeKey').value.trim(),
         perplexityKey: $('#perplexityKey').value.trim(),
+        grokKey: $('#grokKey').value.trim(),
     };
     state.claudeProxy = $('#claudeProxy').value.trim();
     saveState();
@@ -719,7 +758,7 @@ function saveApiKeys() {
 function clearApiKeys() {
     state.apiKeys = {};
     state.claudeProxy = '';
-    ['openaiKey', 'googleKey', 'claudeKey', 'perplexityKey', 'claudeProxy'].forEach(id => {
+    ['openaiKey', 'googleKey', 'claudeKey', 'perplexityKey', 'grokKey', 'claudeProxy'].forEach(id => {
         const el = $(`#${id}`);
         if (el) el.value = '';
     });
