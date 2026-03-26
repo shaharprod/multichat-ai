@@ -446,13 +446,22 @@ function appendMessageToDOM(msg) {
 
     const costInfo = msg.cost ? `<div class="msg-cost">💰 $${msg.cost.toFixed(6)} (${msg.inputTokens || 0}+${msg.outputTokens || 0} טוקנים)</div>` : '';
 
+    const ttsButton = msg.role === 'assistant' ? `<button class="tts-btn" title="הקרא בקול"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> השמע</button>` : '';
+
     div.innerHTML = `
         <div class="message-avatar ${avatarClass}">${avatarText}</div>
         <div class="message-bubble">
             <div class="message-content">${formatMessage(msg.content)}</div>
             ${costInfo}
+            ${ttsButton}
         </div>
     `;
+
+    // הוספת אירוע TTS לכפתור
+    const ttsBtn = div.querySelector('.tts-btn');
+    if (ttsBtn) {
+        ttsBtn.addEventListener('click', () => speakText(msg.content, ttsBtn));
+    }
 
     dom.messagesContainer.appendChild(div);
     return div;
@@ -896,13 +905,154 @@ function bindEvents() {
         if (e.target === dom.budgetModal) closeBudget();
     });
 
+    // מיקרופון
+    const micBtn = $('#micBtn');
+    if (micBtn) micBtn.addEventListener('click', toggleRecording);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeSettings();
             closeBudget();
             dom.sidebar.classList.remove('open');
+            if (isRecording) stopRecording();
         }
     });
+
+    // אתחול זיהוי דיבור
+    initSpeechRecognition();
+
+    // טעינת קולות TTS
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = () => {};
+    }
+}
+
+// ── דיבור למיקרופון (STT) ──────────────────────────────────────
+let recognition = null;
+let isRecording = false;
+
+function initSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        console.warn('Speech Recognition לא נתמך בדפדפן זה');
+        const micBtn = $('#micBtn');
+        if (micBtn) micBtn.style.display = 'none';
+        return;
+    }
+
+    recognition = new SpeechRecognition();
+    recognition.lang = 'he-IL';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                finalTranscript += transcript;
+            } else {
+                interimTranscript += transcript;
+            }
+        }
+
+        if (finalTranscript && dom.messageInput) {
+            dom.messageInput.value += finalTranscript;
+            dom.sendBtn.disabled = false;
+            dom.charCount.textContent = dom.messageInput.value.length;
+        }
+    };
+
+    recognition.onerror = (event) => {
+        console.error('שגיאת זיהוי דיבור:', event.error);
+        stopRecording();
+    };
+
+    recognition.onend = () => {
+        if (isRecording) {
+            // מפסיק אוטומטית - נעצור
+            stopRecording();
+        }
+    };
+}
+
+function startRecording() {
+    if (!recognition) return;
+    isRecording = true;
+    const micBtn = $('#micBtn');
+    if (micBtn) micBtn.classList.add('recording');
+    recognition.lang = 'he-IL'; // ברירת מחדל עברית
+    recognition.start();
+}
+
+function stopRecording() {
+    if (!recognition) return;
+    isRecording = false;
+    const micBtn = $('#micBtn');
+    if (micBtn) micBtn.classList.remove('recording');
+    try { recognition.stop(); } catch(e) {}
+}
+
+function toggleRecording() {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+// ── קריאה קולית (TTS) ──────────────────────────────────────────
+let currentUtterance = null;
+
+function speakText(text, button) {
+    // אם כבר מדבר, עצור
+    if (speechSynthesis.speaking) {
+        speechSynthesis.cancel();
+        $$('.tts-btn.speaking').forEach(b => b.classList.remove('speaking'));
+        if (currentUtterance && button.classList.contains('speaking')) {
+            button.classList.remove('speaking');
+            currentUtterance = null;
+            return;
+        }
+    }
+
+    // נקה תגיות HTML ותווי Markdown
+    const cleanText = text
+        .replace(/<[^>]*>/g, '')
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`[^`]+`/g, '')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/#{1,6}\s/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'he-IL';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    // נסה למצוא קול עברי
+    const voices = speechSynthesis.getVoices();
+    const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
+    if (hebrewVoice) utterance.voice = hebrewVoice;
+
+    button.classList.add('speaking');
+    currentUtterance = utterance;
+
+    utterance.onend = () => {
+        button.classList.remove('speaking');
+        currentUtterance = null;
+    };
+
+    utterance.onerror = () => {
+        button.classList.remove('speaking');
+        currentUtterance = null;
+    };
+
+    speechSynthesis.speak(utterance);
 }
 
 // ── הפעלה ─────────────────────────────────────────────────────
