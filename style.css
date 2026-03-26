@@ -674,6 +674,51 @@ a:hover { text-decoration: underline; }
 .send-btn:hover:not(:disabled) { background: var(--accent-hover); transform: scale(1.05); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Microphone Button */
+.mic-btn {
+    width: 40px;
+    height: 40px;
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+.mic-btn:hover { color: var(--accent); border-color: var(--accent); }
+.mic-btn.recording {
+    color: #ef4444;
+    border-color: #ef4444;
+    background: #fef2f2;
+    animation: mic-pulse 1.2s infinite;
+}
+@keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+}
+
+/* TTS Speaker Button */
+.tts-btn {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    transition: all var(--transition);
+    margin-top: 4px;
+}
+.tts-btn:hover { color: var(--accent); background: var(--accent-light); }
+.tts-btn.speaking { color: var(--accent); }
+
 .input-footer {
     display: flex;
     justify-content: space-between;
