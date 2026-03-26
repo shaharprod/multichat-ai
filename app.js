@@ -1156,7 +1156,7 @@ let voiceSilenceTimer = null;
 let voiceAccumulatedText = '';
 let voiceIsSpeaking = false;
 let voiceUserInterrupted = false;
-const SILENCE_TIMEOUT = 1800; // 1.8 שניות שקט = סיום דיבור
+const SILENCE_TIMEOUT = 3000; // 3 שניות שקט = סיום דיבור
 
 function initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1211,7 +1211,7 @@ function initSpeechRecognition() {
                 updateVoiceChatStatus('מאזין: ' + voiceAccumulatedText.slice(-60));
             }
 
-            // התחל טיימר שקט — אם אין דיבור 1.8 שניות, שלח
+            // התחל טיימר שקט — אם אין דיבור 3 שניות, שלח
             voiceSilenceTimer = setTimeout(() => {
                 if (voiceChatActive && voiceAccumulatedText.trim()) {
                     voiceChatSend(voiceAccumulatedText.trim());
