@@ -963,6 +963,7 @@ function bindEvents() {
 
 let recognition = null;
 let isRecording = false;
+let micSilenceTimer = null; // טיימר שקט למיקרופון רגיל
 
 // ── Voice Chat Mode ─────────────────────────────────────────
 let voiceChatActive = false;
@@ -1014,10 +1015,12 @@ function initSpeechRecognition() {
             clearTimeout(voiceSilenceTimer);
 
             if (interimTranscript) {
+                console.log('[VoiceChat] ביניים:', interimTranscript);
                 updateVoiceChatStatus('מאזין: ' + (voiceAccumulatedText + interimTranscript).slice(-60));
             }
 
             if (finalTranscript) {
+                console.log('[VoiceChat] טקסט סופי:', finalTranscript);
                 voiceAccumulatedText += finalTranscript + ' ';
                 updateVoiceChatStatus('מאזין: ' + voiceAccumulatedText.slice(-60));
             }
@@ -1042,19 +1045,39 @@ function initSpeechRecognition() {
             const base = dom.messageInput.dataset.baseText || '';
 
             if (finalTranscript) {
+                console.log('[MultiChat Mic] טקסט סופי:', finalTranscript);
                 // טקסט סופי — הוסף לבסיס ועדכן
                 dom.messageInput.value = base + finalTranscript;
                 dom.messageInput.dataset.baseText = dom.messageInput.value;
                 dom.sendBtn.disabled = false;
+
+                // שלח אוטומטית אחרי 2 שניות שקט
+                clearTimeout(micSilenceTimer);
+                micSilenceTimer = setTimeout(() => {
+                    if (isRecording && dom.messageInput.value.trim()) {
+                        console.log('[MultiChat Mic] שולח אוטומטית:', dom.messageInput.value.trim());
+                        const content = dom.messageInput.value.trim();
+                        dom.messageInput.value = '';
+                        dom.messageInput.dataset.baseText = '';
+                        dom.charCount.textContent = '0';
+                        dom.sendBtn.disabled = true;
+                        stopRecording();
+                        sendMessage(content);
+                    }
+                }, 2000);
             } else if (interimTranscript) {
+                console.log('[MultiChat Mic] ביניים:', interimTranscript);
                 // טקסט ביניים — הצג אבל אל תשמור לבסיס
                 dom.messageInput.value = base + interimTranscript;
+                // אפס טיימר שקט — עדיין מדברים
+                clearTimeout(micSilenceTimer);
             }
             dom.charCount.textContent = dom.messageInput.value.length;
         }
     };
 
     recognition.onerror = (event) => {
+        console.log('[MultiChat STT] שגיאה:', event.error);
         if (event.error === 'no-speech' || event.error === 'audio-capture') return;
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
             alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
@@ -1064,10 +1087,14 @@ function initSpeechRecognition() {
     };
 
     recognition.onend = () => {
+        console.log('[MultiChat STT] onend — isRecording:', isRecording, 'voiceChatActive:', voiceChatActive);
         if (isRecording || voiceChatActive) {
             try {
                 setTimeout(() => {
-                    if (isRecording || voiceChatActive) recognition.start();
+                    if (isRecording || voiceChatActive) {
+                        console.log('[MultiChat STT] מפעיל מחדש...');
+                        recognition.start();
+                    }
                 }, 200);
             } catch(e) {
                 console.warn('לא ניתן להפעיל מחדש:', e);
@@ -1232,6 +1259,7 @@ function startRecording() {
 function stopRecording() {
     if (!recognition) return;
     isRecording = false;
+    clearTimeout(micSilenceTimer);
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.classList.remove('recording');
     if (dom.messageInput) delete dom.messageInput.dataset.baseText;
