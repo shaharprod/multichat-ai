@@ -1262,9 +1262,11 @@ function initSpeechRecognition() {
         }
     };
 
+    let recognitionRestarting = false;
+
     recognition.onerror = (event) => {
         console.log('[MultiChat STT] שגיאה:', event.error);
-        if (event.error === 'no-speech' || event.error === 'audio-capture') return;
+        if (event.error === 'no-speech' || event.error === 'audio-capture' || event.error === 'aborted') return;
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
             alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
         }
@@ -1274,18 +1276,27 @@ function initSpeechRecognition() {
 
     recognition.onend = () => {
         console.log('[MultiChat STT] onend — isRecording:', isRecording, 'voiceChatActive:', voiceChatActive);
-        if (isRecording || voiceChatActive) {
-            try {
-                setTimeout(() => {
-                    if (isRecording || voiceChatActive) {
+        if ((isRecording || voiceChatActive) && !recognitionRestarting) {
+            recognitionRestarting = true;
+            setTimeout(() => {
+                recognitionRestarting = false;
+                if (isRecording || voiceChatActive) {
+                    try {
                         console.log('[MultiChat STT] מפעיל מחדש...');
                         recognition.start();
+                    } catch(e) {
+                        console.warn('[MultiChat STT] לא ניתן להפעיל מחדש:', e);
+                        // ניסיון נוסף אחרי השהייה ארוכה יותר
+                        setTimeout(() => {
+                            if (isRecording || voiceChatActive) {
+                                try { recognition.start(); } catch(e2) {
+                                    if (!voiceChatActive) stopRecording();
+                                }
+                            }
+                        }, 1000);
                     }
-                }, 200);
-            } catch(e) {
-                console.warn('לא ניתן להפעיל מחדש:', e);
-                if (!voiceChatActive) stopRecording();
-            }
+                }
+            }, 500);
         }
     };
 }
