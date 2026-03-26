@@ -489,50 +489,44 @@ function scrollToBottom() {
 }
 
 // ── ניקוד אוטומטי לטקסט עברי (Dicta Nakdan API) ─────────────
+// timeout של 2 שניות — אם Dicta איטי, ממשיכים בלי ניקוד
 async function addNikud(text) {
-    // בדיקה אם יש תווים עבריים
     if (!/[\u0590-\u05FF]/.test(text)) return text;
-    // אם כבר יש ניקוד, אל תוסיף
     if (/[\u05B0-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]/.test(text)) return text;
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
         const res = await fetch('https://nakdan-5-0.loadbalancer.dicta.org.il/api', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task: 'nakdan', data: text, genre: 'modern', addmorph: false }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
         if (!res.ok) return text;
         const data = await res.json();
-        // Dicta מחזיר מערך של מילים עם ניקוד
-        if (Array.isArray(data)) {
-            return data.map(w => w.nikud || w.word || w).join('');
-        }
+        if (Array.isArray(data)) return data.map(w => w.nikud || w.word || w).join('');
         if (typeof data === 'string') return data;
         return text;
     } catch (e) {
-        console.warn('[MultiChat] Dicta nikud failed:', e);
-        return text;
+        return text; // timeout או שגיאה — ממשיכים בלי ניקוד
     }
 }
 
-// עדכון הודעת משתמש עם ניקוד (ברקע)
-async function nikudUserMessage(msgDiv, originalText, conv, msgIndex) {
-    const nikudText = await addNikud(originalText);
-    if (nikudText !== originalText) {
-        const contentEl = msgDiv.querySelector('.message-content');
-        if (contentEl) contentEl.innerHTML = formatMessage(nikudText);
-        // עדכון גם באובייקט ההיסטוריה
-        if (conv && conv.messages[msgIndex]) {
-            conv.messages[msgIndex].content = nikudText;
+// ניקוד ברקע — לא חוסם שום דבר
+function nikudInBackground(msgDiv, text, conv, msgIndex) {
+    addNikud(text).then(nikudText => {
+        if (nikudText !== text) {
+            const el = msgDiv.querySelector('.message-content');
+            if (el) el.innerHTML = formatMessage(nikudText);
+            if (conv?.messages?.[msgIndex]) conv.messages[msgIndex].content = nikudText;
         }
-    }
+    });
 }
 
 // ── שליחת הודעה ──────────────────────────────────────────────
 async function sendMessage(content) {
     if (state.isStreaming) return;
-
-    // ניקוד לטקסט המשתמש לפני הכל
-    const nikudContent = await addNikud(content);
 
     let conv = getCurrentConversation();
     if (!conv) conv = createConversation();
@@ -540,12 +534,15 @@ async function sendMessage(content) {
     conv.provider = state.provider;
     conv.model = state.model;
 
-    const userMsg = { role: 'user', content: nikudContent, provider: state.provider };
+    // שליחה מיידית — ניקוד ברקע
+    const userMsg = { role: 'user', content, provider: state.provider };
     conv.messages.push(userMsg);
-    appendMessageToDOM(userMsg);
+    const userDiv = appendMessageToDOM(userMsg);
+    const userMsgIdx = conv.messages.length - 1;
+    nikudInBackground(userDiv, content, conv, userMsgIdx);
 
     if (conv.messages.length === 1) {
-        conv.title = nikudContent.slice(0, 50) + (nikudContent.length > 50 ? '...' : '');
+        conv.title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
         renderChatHistory();
     }
 
@@ -650,15 +647,7 @@ function formatMarkdown(text) {
 //  Streaming API Calls — טֶקְסְט זוֹרֵם בִּזְמַן אֱמֶת
 // ══════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = `ענה תמיד בעברית עם ניקוד מלא (נְקוּדוֹת) על כל מילה ומילה, אלא אם המשתמש פנה בשפה אחרת. השתמש ב-RTL.
-
-חוקי ניקוד חובה:
-1. כל מילה בעברית חייבת ניקוד מלא — כולל תנועות, דגש, שווא, חטפים.
-2. הניקוד חייב להיות מדויק דקדוקית — הוא קובע את פרשנות המילה ומשמעותה.
-   לדוגמה: "סֵפֶר" (book) ≠ "סָפַר" (counted), "דָּבָר" (thing) ≠ "דִּבֵּר" (spoke).
-3. שים לב לניקוד בטקסט של המשתמש — הוא מצביע על המשמעות המדויקת שהמשתמש התכוון אליה.
-4. בתשובתך, השתמש בניקוד שמשקף נכון את ההגייה והמשמעות — כדי שקריאה בקול תהיה נכונה.
-5. אל תדלג על ניקוד אפילו במילים קצרות (גַּם, אֶת, עַל, שֶׁל, הוּא, הִיא).`;
+const SYSTEM_PROMPT = 'עֲנֵה בְּעִבְרִית עִם נִקּוּד מָלֵא עַל כָּל מִלָּה. RTL. נִקּוּד מְדֻיָּק: סֵפֶר≠סָפַר, דָּבָר≠דִּבֵּר. גַּם מִלִּים קְצָרוֹת: גַּם, אֶת, עַל, שֶׁל.';
 
 // ── Helper: קריאת SSE stream מ-OpenAI-compatible APIs ────────
 async function readOpenAIStream(res, onChunk) {
@@ -1190,10 +1179,11 @@ function initSpeechRecognition() {
         if (voiceChatActive) {
             // המשתמש מדבר — עצור את ה-AI אם הוא מדבר
             if ((interimTranscript || finalTranscript) && voiceIsSpeaking) {
+                stopCurrentAudio();
                 speechSynthesis.cancel();
                 voiceIsSpeaking = false;
                 voiceUserInterrupted = true;
-                updateVoiceChatStatus('מאזין...');
+                updateVoiceChatStatus('מַאֲזִין...');
             }
 
             // אפס טיימר שקט בכל דיבור
@@ -1293,11 +1283,6 @@ function initSpeechRecognition() {
 async function voiceChatSend(text) {
     if (!voiceChatActive || !text) return;
 
-    updateVoiceChatStatus('מְנַקֵּד...');
-
-    // ניקוד לטקסט המשתמש לפני הכל
-    const nikudText = await addNikud(text);
-
     updateVoiceChatStatus('חוֹשֵׁב...');
 
     let conv = getCurrentConversation();
@@ -1305,9 +1290,11 @@ async function voiceChatSend(text) {
     conv.provider = state.provider;
     conv.model = state.model;
 
-    const userMsg = { role: 'user', content: nikudText, provider: state.provider };
+    const userMsg = { role: 'user', content: text, provider: state.provider };
     conv.messages.push(userMsg);
-    appendMessageToDOM(userMsg);
+    const userDiv = appendMessageToDOM(userMsg);
+    const userMsgIdx = conv.messages.length - 1;
+    nikudInBackground(userDiv, text, conv, userMsgIdx);
 
     if (conv.messages.length === 1) {
         conv.title = text.slice(0, 50) + (text.length > 50 ? '...' : '');
@@ -1354,13 +1341,9 @@ async function voiceChatSend(text) {
 }
 
 // ── Voice Chat: TTS עם זיהוי הפרעה ────────────────────────
-function voiceSpeak(text) {
-    voiceIsSpeaking = true;
-    voiceUserInterrupted = false;
-    updateVoiceChatStatus('מְדַבֵּר...');
-
-    // ניקוי markdown אבל שימור ניקוד עברי — הניקוד עוזר ל-TTS להגות נכון
-    const cleanText = text
+// ── ניקוי Markdown לטקסט דיבור ──────────────────────────────
+function cleanForSpeech(text) {
+    return text
         .replace(/<[^>]*>/g, '')
         .replace(/```[\s\S]*?```/g, '. קוֹד. ')
         .replace(/`[^`]+`/g, '$1')
@@ -1368,49 +1351,125 @@ function voiceSpeak(text) {
         .replace(/\*(.+?)\*/g, '$1')
         .replace(/#{1,6}\s/g, '')
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/⚠️/g, '')
+        .replace(/[⚠️🔥⚡⭐]/g, '')
         .replace(/\n+/g, '. ')
-        .replace(/\.\s*\./g, '.'); // מנקה נקודות כפולות
+        .replace(/\.\s*\./g, '.');
+}
 
-    // פיצול לחלקים קצרים — TTS עובד יותר טוב עם משפטים קצרים
-    const sentences = cleanText.split(/(?<=[.!?،؛])\s+/).filter(s => s.trim());
+// ── OpenAI TTS — דיבור איכותי עם תמיכה בניקוד ─────────────
+let currentAudio = null;
 
-    let sentenceIdx = 0;
-    function speakNext() {
-        if (sentenceIdx >= sentences.length || !voiceChatActive || voiceUserInterrupted) {
-            voiceIsSpeaking = false;
-            if (voiceChatActive && !voiceUserInterrupted) {
-                updateVoiceChatStatus('מַאֲזִין...');
+async function openAiTTS(text) {
+    const apiKey = state.apiKeys?.openaiKey;
+    if (!apiKey) return false;
+
+    try {
+        const res = await fetch('https://api.openai.com/v1/audio/speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({
+                model: 'tts-1',
+                input: text.slice(0, 4096),
+                voice: 'nova',
+                speed: 1.0,
+            }),
+        });
+        if (!res.ok) return false;
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        currentAudio = new Audio(url);
+        return new Promise(resolve => {
+            currentAudio.onended = () => { currentAudio = null; URL.revokeObjectURL(url); resolve(true); };
+            currentAudio.onerror = () => { currentAudio = null; resolve(false); };
+            currentAudio.play();
+        });
+    } catch { return false; }
+}
+
+function stopCurrentAudio() {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    speechSynthesis.cancel();
+}
+
+// ── Voice Chat: דיבור — OpenAI TTS עם fallback לדפדפן ───────
+// השבתת/הפעלת מיקרופון בזמן דיבור AI — מונע echo
+function pauseMicForSpeaking() {
+    if (recognition && (isRecording || voiceChatActive)) {
+        try { recognition.stop(); } catch {}
+        console.log('[MultiChat] מִיקְרוֹפוֹן מוּשְׁבָּת — AI מְדַבֵּר');
+    }
+}
+
+function resumeMicAfterSpeaking() {
+    if (voiceChatActive) {
+        try {
+            setTimeout(() => {
+                if (voiceChatActive) {
+                    recognition.start();
+                    console.log('[MultiChat] מִיקְרוֹפוֹן חָזַר — AI סִיֵּם לְדַבֵּר');
+                }
+            }, 300); // המתנה קצרה כדי שהאודיו ייפסק לגמרי
+        } catch {}
+    }
+}
+
+async function voiceSpeak(text) {
+    voiceIsSpeaking = true;
+    voiceUserInterrupted = false;
+    updateVoiceChatStatus('מְדַבֵּר...');
+
+    // כבה מיקרופון כדי שהמודל לא ישמע את עצמו
+    pauseMicForSpeaking();
+
+    const cleanText = cleanForSpeech(text);
+
+    // ניסיון OpenAI TTS (איכותי, תומך ניקוד)
+    const apiKey = state.apiKeys?.openaiKey;
+    if (apiKey) {
+        try {
+            const res = await fetch('https://api.openai.com/v1/audio/speech', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({
+                    model: 'tts-1',
+                    input: cleanText.slice(0, 4096),
+                    voice: 'nova',
+                    speed: 1.0,
+                }),
+            });
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                currentAudio = new Audio(url);
+                currentAudio.onended = () => {
+                    currentAudio = null;
+                    URL.revokeObjectURL(url);
+                    voiceIsSpeaking = false;
+                    resumeMicAfterSpeaking();
+                    if (voiceChatActive && !voiceUserInterrupted) updateVoiceChatStatus('מַאֲזִין...');
+                };
+                currentAudio.onerror = () => {
+                    currentAudio = null;
+                    voiceIsSpeaking = false;
+                    resumeMicAfterSpeaking();
+                    if (voiceChatActive) updateVoiceChatStatus('מַאֲזִין...');
+                };
+                currentAudio.play();
+                return;
             }
-            return;
-        }
-
-        const utterance = new SpeechSynthesisUtterance(sentences[sentenceIdx]);
-        utterance.lang = 'he-IL';
-        utterance.rate = 1.05;
-        utterance.pitch = 1.0;
-
-        // בחירת קול עברי — עדיפות ל-Google Hebrew
-        const voices = speechSynthesis.getVoices();
-        const googleHe = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google'));
-        const anyHe = voices.find(v => v.lang.startsWith('he'));
-        if (googleHe) utterance.voice = googleHe;
-        else if (anyHe) utterance.voice = anyHe;
-
-        utterance.onend = () => {
-            sentenceIdx++;
-            speakNext();
-        };
-
-        utterance.onerror = () => {
-            voiceIsSpeaking = false;
-            if (voiceChatActive) updateVoiceChatStatus('מַאֲזִין...');
-        };
-
-        speechSynthesis.speak(utterance);
+        } catch {}
     }
 
-    speakNext();
+    // Fallback: דפדפן TTS
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'he-IL';
+    utterance.rate = 1.05;
+    const voices = speechSynthesis.getVoices();
+    const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
+    if (heVoice) utterance.voice = heVoice;
+    utterance.onend = () => { voiceIsSpeaking = false; resumeMicAfterSpeaking(); if (voiceChatActive && !voiceUserInterrupted) updateVoiceChatStatus('מַאֲזִין...'); };
+    utterance.onerror = () => { voiceIsSpeaking = false; resumeMicAfterSpeaking(); if (voiceChatActive) updateVoiceChatStatus('מַאֲזִין...'); };
+    speechSynthesis.speak(utterance);
 }
 
 // ── Voice Chat: UI ─────────────────────────────────────────
@@ -1481,55 +1540,52 @@ function toggleRecording() {
     else startRecording();
 }
 
-// ── TTS לכפתור השמע (מצב רגיל) ─────────────────────────────
+// ── TTS לכפתור השמע (מצב רגיל) — OpenAI TTS + fallback ─────
 let currentUtterance = null;
 
-function speakText(text, button) {
-    if (speechSynthesis.speaking) {
-        speechSynthesis.cancel();
-        $$('.tts-btn.speaking').forEach(b => b.classList.remove('speaking'));
-        if (button && button.classList.contains('speaking')) {
-            currentUtterance = null;
-            return;
-        }
+async function speakText(text, button) {
+    // עצור דיבור קודם
+    stopCurrentAudio();
+    $$('.tts-btn.speaking').forEach(b => b.classList.remove('speaking'));
+    if (button && button.classList.contains('speaking')) {
+        currentUtterance = null;
+        return;
     }
 
-    // ניקוי markdown אבל שימור ניקוד עברי — לקריאה נכונה
-    const cleanText = text
-        .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, '. קוֹד. ')
-        .replace(/`[^`]+`/g, '$1')
-        .replace(/\*\*(.+?)\*\*/g, '$1')
-        .replace(/\*(.+?)\*/g, '$1')
-        .replace(/#{1,6}\s/g, '')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/⚠️/g, '')
-        .replace(/\n+/g, '. ');
+    const cleanText = cleanForSpeech(text);
+    if (button) button.classList.add('speaking');
 
+    // ניסיון OpenAI TTS
+    const apiKey = state.apiKeys?.openaiKey;
+    if (apiKey) {
+        try {
+            const res = await fetch('https://api.openai.com/v1/audio/speech', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({ model: 'tts-1', input: cleanText.slice(0, 4096), voice: 'nova', speed: 1.0 }),
+            });
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                currentAudio = new Audio(url);
+                currentAudio.onended = () => { currentAudio = null; URL.revokeObjectURL(url); if (button) button.classList.remove('speaking'); };
+                currentAudio.onerror = () => { currentAudio = null; if (button) button.classList.remove('speaking'); };
+                currentAudio.play();
+                return;
+            }
+        } catch {}
+    }
+
+    // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
     utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-
-    // עדיפות ל-Google Hebrew — תומך טוב יותר בניקוד
     const voices = speechSynthesis.getVoices();
-    const googleHe = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google'));
-    const anyHe = voices.find(v => v.lang.startsWith('he'));
-    if (googleHe) utterance.voice = googleHe;
-    else if (anyHe) utterance.voice = anyHe;
-
-    if (button) button.classList.add('speaking');
+    const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
+    if (heVoice) utterance.voice = heVoice;
     currentUtterance = utterance;
-
-    utterance.onend = () => {
-        if (button) button.classList.remove('speaking');
-        currentUtterance = null;
-    };
-    utterance.onerror = () => {
-        if (button) button.classList.remove('speaking');
-        currentUtterance = null;
-    };
-
+    utterance.onend = () => { if (button) button.classList.remove('speaking'); currentUtterance = null; };
+    utterance.onerror = () => { if (button) button.classList.remove('speaking'); currentUtterance = null; };
     speechSynthesis.speak(utterance);
 }
 
