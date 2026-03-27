@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MultiChat AI — צ'אט עם כל מודל AI</title>
-    <link rel="stylesheet" href="style.css?v=20260327g">
+    <link rel="stylesheet" href="style.css?v=20260327h">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Hebrew:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
@@ -226,6 +226,11 @@
                         <option value="cedar">Cedar (יַצִּיב)</option>
                     </select>
                 </div>
+                <div class="tts-speed-control" id="ttsSpeedControl" title="מהירות דיבור">
+                    <button class="speed-btn" id="speedDownBtn">−</button>
+                    <span class="speed-display" id="speedDisplay">1.0×</span>
+                    <button class="speed-btn" id="speedUpBtn">+</button>
+                </div>
                 <button class="send-btn" id="sendBtn" disabled>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                 </button>
@@ -401,6 +406,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=20260327g"></script>
+    <script src="app.js?v=20260327h"></script>
 </body>
 </html>
