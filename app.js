@@ -1194,6 +1194,10 @@ function bindEvents() {
     const endVoiceChatBtn = $('#endVoiceChatBtn');
     if (endVoiceChatBtn) endVoiceChatBtn.addEventListener('click', stopVoiceChat);
 
+    // כפתור Mute למיקרופון בשיחה קולית
+    const muteBtn = $('#muteVoiceChatBtn');
+    if (muteBtn) muteBtn.addEventListener('click', toggleVoiceMute);
+
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             if (voiceChatActive) { stopVoiceChat(); return; }
@@ -1282,9 +1286,9 @@ function initSpeechRecognition() {
     recognition = createRecognition();
 
     recognition.onresult = (event) => {
-        // ★ מניעת echo — אם AI מדבר, התעלם מכל קלט מהמיקרופון
-        if (voiceIsSpeaking && voiceChatActive) {
-            console.log('[MultiChat STT] ⚠️ קלט בזמן ש-AI מדבר — מתעלם (מניעת echo)');
+        // ★ מניעת echo — אם AI מדבר או מיקרופון מושתק, התעלם מכל קלט
+        if ((voiceIsSpeaking || voiceMuted) && voiceChatActive) {
+            console.log('[MultiChat STT] ⚠️ קלט נחסם —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
             return;
         }
 
@@ -1405,9 +1409,9 @@ function initSpeechRecognition() {
     // עצירה נקייה + start חדש — ללא התנגשויות
     function cleanStart() {
         if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
-        // ★ אם AI מדבר — אל תפעיל STT בכלל
-        if (voiceIsSpeaking) {
-            console.log('[MultiChat STT] cleanStart ביטול — AI מדבר');
+        // ★ אם AI מדבר או muted — אל תפעיל STT בכלל
+        if (voiceIsSpeaking || voiceMuted) {
+            console.log('[MultiChat STT] cleanStart ביטול —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
             return;
         }
         skipNextRestart = true;
@@ -1417,8 +1421,8 @@ function initSpeechRecognition() {
             skipNextRestart = false;
             if (!isRecording && !voiceChatActive) return;
             // ★ בדיקה נוספת
-            if (voiceIsSpeaking) {
-                console.log('[MultiChat STT] cleanStart timeout — AI עדיין מדבר');
+            if (voiceIsSpeaking || voiceMuted) {
+                console.log('[MultiChat STT] cleanStart timeout — לא מפעיל');
                 return;
             }
             try {
@@ -1430,7 +1434,7 @@ function initSpeechRecognition() {
                 recognition = createRecognition();
                 attachRecognitionHandlers();
                 setTimeout(() => {
-                    if ((isRecording || voiceChatActive) && !voiceIsSpeaking) {
+                    if ((isRecording || voiceChatActive) && !voiceIsSpeaking && !voiceMuted) {
                         try { recognition.start(); } catch(e2) { console.error('[MultiChat STT] נכשל סופית:', e2); }
                     }
                 }, 500);
@@ -1454,9 +1458,9 @@ function initSpeechRecognition() {
         recognition.onend = () => {
             console.log('[MultiChat STT] onend — skip:', skipNextRestart, 'rec:', isRecording, 'vc:', voiceChatActive, 'speaking:', voiceIsSpeaking);
             if (skipNextRestart) { skipNextRestart = false; return; }
-            // ★ אם ה-AI מדבר — אל תפעיל מחדש את ה-STT! זו הסיבה ללולאת echo
-            if (voiceIsSpeaking) {
-                console.log('[MultiChat STT] AI מְדַבֵּר — מיקרופון נשאר כבוי');
+            // ★ אם ה-AI מדבר או muted — אל תפעיל מחדש את ה-STT
+            if (voiceIsSpeaking || voiceMuted) {
+                console.log('[MultiChat STT] מיקרופון נשאר כבוי —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
                 return;
             }
             if (isRecording || voiceChatActive) {
@@ -1465,9 +1469,9 @@ function initSpeechRecognition() {
                     restartTimer = setTimeout(() => {
                         restartTimer = null;
                         if (!isRecording && !voiceChatActive) return;
-                        // ★ בדיקה נוספת — אל תפעיל STT אם AI מדבר
-                        if (voiceIsSpeaking) {
-                            console.log('[MultiChat STT] AI עדיין מדבר — לא מפעיל מיקרופון');
+                        // ★ בדיקה נוספת — אל תפעיל STT אם AI מדבר או muted
+                        if (voiceIsSpeaking || voiceMuted) {
+                            console.log('[MultiChat STT] לא מפעיל מיקרופון —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
                             return;
                         }
                         try {
@@ -1687,7 +1691,9 @@ function cleanForSpeech(text) {
 }
 
 // ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
-const TTS_HEBREW_INSTRUCTIONS = `You are a native Hebrew speaker reading text with nikud (vowel diacritics). CRITICAL: You MUST pronounce every word EXACTLY according to its nikud marks. The nikud is the ONLY authority for pronunciation — never guess or use default pronunciation.
+const TTS_HEBREW_INSTRUCTIONS = `ABSOLUTE RULE #1: Read the EXACT text given to you, word for word. Do NOT paraphrase, summarize, skip words, add words, or change the order. You are a TEXT READER, not a conversationalist. Read what is written — nothing more, nothing less.
+
+RULE #2: You are a native Hebrew speaker. Pronounce every word EXACTLY according to its nikud marks (vowel diacritics). The nikud is the ONLY authority for pronunciation — never guess or use default pronunciation.
 Vowel rules:
 - קָמָץ (kamatz) = "a" as in "car". פָּ = "pa", not "po".
 - פַּתָח (patach) = "a" as in "cat". בַּ = "ba".
@@ -1872,11 +1878,48 @@ function updateVoiceChatStatus(text) {
     if (statusEl) statusEl.textContent = text;
 }
 
+let voiceMuted = false;
+
+function toggleVoiceMute() {
+    voiceMuted = !voiceMuted;
+    const muteBtn = $('#muteVoiceChatBtn');
+
+    if (voiceMuted) {
+        // השתק — עצור STT
+        try { recognition.stop(); } catch {}
+        if (muteBtn) {
+            muteBtn.classList.add('muted');
+            muteBtn.querySelector('.mute-label').textContent = 'בטל השתקה';
+        }
+        updateVoiceChatStatus('מיקרופון מושתק 🔇');
+        console.log('[MultiChat] מיקרופון מושתק (Mute)');
+    } else {
+        // בטל השתקה — הפעל STT מחדש
+        if (muteBtn) {
+            muteBtn.classList.remove('muted');
+            muteBtn.querySelector('.mute-label').textContent = 'השתק';
+        }
+        if (voiceChatActive && !voiceIsSpeaking) {
+            if (window._sttCleanStart) window._sttCleanStart();
+            updateVoiceChatStatus('מַאֲזִין...');
+        }
+        console.log('[MultiChat] מיקרופון חזר (Unmute)');
+    }
+}
+
 function startVoiceChat() {
     voiceChatActive = true;
     voiceAccumulatedText = '';
     voiceIsSpeaking = false;
+    voiceMuted = false;
     isRecording = true;
+
+    // אפס מצב כפתור mute
+    const muteBtn = $('#muteVoiceChatBtn');
+    if (muteBtn) {
+        muteBtn.classList.remove('muted');
+        muteBtn.querySelector('.mute-label').textContent = 'השתק';
+    }
 
     // הפעלה נקייה דרך cleanStart
     if (window._sttCleanStart) window._sttCleanStart();
