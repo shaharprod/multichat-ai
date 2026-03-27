@@ -110,6 +110,7 @@ let state = {
     apiKeys: {},
     claudeProxy: '',
     ttsVoice: 'nova',
+    ttsSpeed: 1.0,
     isStreaming: false,
     // מעקב הוצאות
     budget: {
@@ -1135,6 +1136,25 @@ function bindEvents() {
         });
     }
 
+    // בקר מהירות דיבור
+    const speedDisplay = $('#speedDisplay');
+    const speedUpBtn = $('#speedUpBtn');
+    const speedDownBtn = $('#speedDownBtn');
+    function updateSpeedDisplay() {
+        if (speedDisplay) speedDisplay.textContent = state.ttsSpeed.toFixed(1) + '×';
+    }
+    updateSpeedDisplay();
+    if (speedUpBtn) speedUpBtn.addEventListener('click', () => {
+        state.ttsSpeed = Math.min(2.0, +(state.ttsSpeed + 0.1).toFixed(1));
+        updateSpeedDisplay();
+        saveState();
+    });
+    if (speedDownBtn) speedDownBtn.addEventListener('click', () => {
+        state.ttsSpeed = Math.max(0.5, +(state.ttsSpeed - 0.1).toFixed(1));
+        updateSpeedDisplay();
+        saveState();
+    });
+
     // טעינת קולות TTS דפדפן
     if (speechSynthesis.onvoiceschanged !== undefined) {
         speechSynthesis.onvoiceschanged = () => {};
@@ -1390,7 +1410,7 @@ async function ttsPlayNext() {
                 body: JSON.stringify({
                     model: 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
-                    voice: state.ttsVoice || 'nova',
+                    voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
                     instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
@@ -1425,7 +1445,7 @@ async function ttsPlayNext() {
     // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
-    utterance.rate = 1.05;
+    utterance.rate = state.ttsSpeed || 1.0;
     const voices = speechSynthesis.getVoices();
     const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
     if (heVoice) utterance.voice = heVoice;
@@ -1599,7 +1619,7 @@ async function openAiTTS(text) {
             body: JSON.stringify({
                 model: 'gpt-4o-mini-tts',
                 input: text.slice(0, 4096),
-                voice: state.ttsVoice || 'nova',
+                voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
                 instructions: TTS_HEBREW_INSTRUCTIONS,
             }),
         });
@@ -1656,7 +1676,7 @@ async function voiceSpeak(text) {
                 body: JSON.stringify({
                     model: 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
-                    voice: state.ttsVoice || 'nova',
+                    voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
                     instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
@@ -1686,7 +1706,7 @@ async function voiceSpeak(text) {
     // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
-    utterance.rate = 1.05;
+    utterance.rate = state.ttsSpeed || 1.0;
     const voices = speechSynthesis.getVoices();
     const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
     if (heVoice) utterance.voice = heVoice;
@@ -1792,7 +1812,7 @@ async function speakText(text, button) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', instructions: TTS_HEBREW_INSTRUCTIONS }),
+                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0, instructions: TTS_HEBREW_INSTRUCTIONS }),
             });
             if (res.ok) {
                 const blob = await res.blob();
@@ -1809,7 +1829,7 @@ async function speakText(text, button) {
     // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
-    utterance.rate = 1.0;
+    utterance.rate = state.ttsSpeed || 1.0;
     const voices = speechSynthesis.getVoices();
     const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
     if (heVoice) utterance.voice = heVoice;
