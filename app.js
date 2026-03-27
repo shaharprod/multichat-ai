@@ -718,6 +718,14 @@ const SYSTEM_PROMPT = `# הוֹרָאָה קְרִיטִית: עִבְרִית �
 ## חָשׁוּב:
 אַל תִּכְתּוֹב אַף מִלָּה בְּעִבְרִית בְּלִי נִקּוּד. בְּכָל מִשְׁפָּט, בְּכָל מִלָּה, תָּמִיד נִקּוּד מָלֵא.`;
 
+// פונקציה שמחזירה SYSTEM_PROMPT עם תאריך ושעה עדכניים
+function getSystemPrompt() {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const timeStr = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    return SYSTEM_PROMPT + `\n\n## זְמַן נוֹכְחִי:\nהַיּוֹם: ${dateStr}, הַשָּׁעָה: ${timeStr}`;
+}
+
 // ── Helper: קריאת SSE stream מ-OpenAI-compatible APIs ────────
 async function readOpenAIStream(res, onChunk) {
     const reader = res.body.getReader();
@@ -744,7 +752,7 @@ async function readOpenAIStream(res, onChunk) {
 
 // ── OpenAI Streaming ─────────────────────────────────────────
 async function callOpenAIStream(apiKey, messages, onChunk) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
@@ -763,7 +771,7 @@ async function callOpenAIStream(apiKey, messages, onChunk) {
 
 // ── Google Gemini Streaming ──────────────────────────────────
 async function callGoogleStream(apiKey, messages, onChunk) {
-    const systemInstruction = { parts: [{ text: SYSTEM_PROMPT }] };
+    const systemInstruction = { parts: [{ text: getSystemPrompt() }] };
     const contents = messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
@@ -830,7 +838,7 @@ async function callClaudeStream(apiKey, messages, onChunk) {
         },
         body: JSON.stringify({
             model: state.model,
-            system: SYSTEM_PROMPT,
+            system: getSystemPrompt(),
             messages: apiMessages,
             max_tokens: 4096,
             temperature: state.temperature,
@@ -867,7 +875,7 @@ async function callClaudeStream(apiKey, messages, onChunk) {
 
 // ── Perplexity Streaming ─────────────────────────────────────
 async function callPerplexityStream(apiKey, messages, onChunk) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
@@ -886,7 +894,7 @@ async function callPerplexityStream(apiKey, messages, onChunk) {
 
 // ── Grok (xAI) Streaming ────────────────────────────────────
 async function callGrokStream(apiKey, messages, onChunk) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
     }))];
@@ -905,7 +913,7 @@ async function callGrokStream(apiKey, messages, onChunk) {
 
 // ── Non-streaming versions (for Voice Chat) ──────────────────
 async function callGoogle(apiKey, messages) {
-    const systemInstruction = { parts: [{ text: SYSTEM_PROMPT }] };
+    const systemInstruction = { parts: [{ text: getSystemPrompt() }] };
     const contents = messages.map(m => ({
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
@@ -925,7 +933,7 @@ async function callGoogle(apiKey, messages) {
 }
 
 async function callOpenAI(apiKey, messages) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
     const res = await fetch(PROVIDERS.openai.endpoint, {
         method: 'POST',
@@ -943,7 +951,7 @@ async function callClaude(apiKey, messages) {
     const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: state.model, system: SYSTEM_PROMPT, messages: apiMessages, max_tokens: 4096, temperature: state.temperature }),
+        body: JSON.stringify({ model: state.model, system: getSystemPrompt(), messages: apiMessages, max_tokens: 4096, temperature: state.temperature }),
     });
     if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `שְׁגִיאַת Claude: ${res.status}`); }
     const data = await res.json();
@@ -951,7 +959,7 @@ async function callClaude(apiKey, messages) {
 }
 
 async function callPerplexity(apiKey, messages) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
     const res = await fetch(PROVIDERS.perplexity.endpoint, {
         method: 'POST',
@@ -964,7 +972,7 @@ async function callPerplexity(apiKey, messages) {
 }
 
 async function callGrok(apiKey, messages) {
-    const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+    const systemMsg = { role: 'system', content: getSystemPrompt() };
     const apiMessages = [systemMsg, ...messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))];
     const res = await fetch(PROVIDERS.grok.endpoint, {
         method: 'POST',
@@ -1268,6 +1276,12 @@ function initSpeechRecognition() {
     recognition = createRecognition();
 
     recognition.onresult = (event) => {
+        // ★ מניעת echo — אם AI מדבר, התעלם מכל קלט מהמיקרופון
+        if (voiceIsSpeaking && voiceChatActive) {
+            console.log('[MultiChat STT] ⚠️ קלט בזמן ש-AI מדבר — מתעלם (מניעת echo)');
+            return;
+        }
+
         let finalTranscript = '';
         let interimTranscript = '';
 
@@ -1385,12 +1399,22 @@ function initSpeechRecognition() {
     // עצירה נקייה + start חדש — ללא התנגשויות
     function cleanStart() {
         if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        // ★ אם AI מדבר — אל תפעיל STT בכלל
+        if (voiceIsSpeaking) {
+            console.log('[MultiChat STT] cleanStart ביטול — AI מדבר');
+            return;
+        }
         skipNextRestart = true;
         try { recognition.abort(); } catch {}
         restartTimer = setTimeout(() => {
             restartTimer = null;
             skipNextRestart = false;
             if (!isRecording && !voiceChatActive) return;
+            // ★ בדיקה נוספת
+            if (voiceIsSpeaking) {
+                console.log('[MultiChat STT] cleanStart timeout — AI עדיין מדבר');
+                return;
+            }
             try {
                 recognition.start();
                 console.log('[MultiChat STT] הופעל בהצלחה');
@@ -1400,7 +1424,7 @@ function initSpeechRecognition() {
                 recognition = createRecognition();
                 attachRecognitionHandlers();
                 setTimeout(() => {
-                    if (isRecording || voiceChatActive) {
+                    if ((isRecording || voiceChatActive) && !voiceIsSpeaking) {
                         try { recognition.start(); } catch(e2) { console.error('[MultiChat STT] נכשל סופית:', e2); }
                     }
                 }, 500);
@@ -1422,14 +1446,24 @@ function initSpeechRecognition() {
         };
 
         recognition.onend = () => {
-            console.log('[MultiChat STT] onend — skip:', skipNextRestart, 'rec:', isRecording, 'vc:', voiceChatActive);
+            console.log('[MultiChat STT] onend — skip:', skipNextRestart, 'rec:', isRecording, 'vc:', voiceChatActive, 'speaking:', voiceIsSpeaking);
             if (skipNextRestart) { skipNextRestart = false; return; }
+            // ★ אם ה-AI מדבר — אל תפעיל מחדש את ה-STT! זו הסיבה ללולאת echo
+            if (voiceIsSpeaking) {
+                console.log('[MultiChat STT] AI מְדַבֵּר — מיקרופון נשאר כבוי');
+                return;
+            }
             if (isRecording || voiceChatActive) {
                 // restart פשוט אחרי 400ms
                 if (!restartTimer) {
                     restartTimer = setTimeout(() => {
                         restartTimer = null;
                         if (!isRecording && !voiceChatActive) return;
+                        // ★ בדיקה נוספת — אל תפעיל STT אם AI מדבר
+                        if (voiceIsSpeaking) {
+                            console.log('[MultiChat STT] AI עדיין מדבר — לא מפעיל מיקרופון');
+                            return;
+                        }
                         try {
                             recognition.start();
                             console.log('[MultiChat STT] restart הצליח');
