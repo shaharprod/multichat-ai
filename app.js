@@ -491,14 +491,18 @@ function scrollToBottom() {
 }
 
 // ── ניקוד אוטומטי לטקסט עברי (Dicta Nakdan API) ─────────────
-// timeout של 2 שניות — אם Dicta איטי, ממשיכים בלי ניקוד
+// timeout של 3 שניות — אם Dicta איטי, ממשיכים בלי ניקוד
 async function addNikud(text) {
     if (!/[\u0590-\u05FF]/.test(text)) return text;
-    if (/[\u05B0-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]/.test(text)) return text;
+    // אם כבר יש ניקוד על רוב המילים — לא צריך
+    const heWords = text.match(/[\u0590-\u05FF]+/g) || [];
+    const nikudPattern = /[\u05B0-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]/;
+    const nikudCount = heWords.filter(w => nikudPattern.test(w)).length;
+    if (heWords.length > 0 && nikudCount / heWords.length > 0.5) return text;
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch('https://nakdan-5-0.loadbalancer.dicta.org.il/api', {
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch('https://nakdan-4-0.loadbalancer.dicta.org.il/api', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task: 'nakdan', data: text, genre: 'modern', addmorph: false }),
@@ -507,7 +511,15 @@ async function addNikud(text) {
         clearTimeout(timeout);
         if (!res.ok) return text;
         const data = await res.json();
-        if (Array.isArray(data)) return data.map(w => w.nikud || w.word || w).join('');
+        if (Array.isArray(data)) {
+            return data.map(w => {
+                if (w.sep) return w.word || ' ';
+                // options[0] = הניקוד הכי סביר
+                if (w.options && w.options.length > 0) return w.options[0];
+                if (w.nikud) return w.nikud;
+                return w.word || w;
+            }).join('');
+        }
         if (typeof data === 'string') return data;
         return text;
     } catch (e) {
@@ -620,6 +632,9 @@ async function sendMessage(content) {
             cost,
         };
         conv.messages.push(aiMsg);
+        const aiMsgIdx = conv.messages.length - 1;
+        // ניקוד ברקע על תשובת AI — אם המודל שכח ניקוד, Dicta ישלים
+        nikudInBackground(aiDiv, fullResponse, conv, aiMsgIdx);
         renderChatHistory();
 
     } catch (error) {
@@ -649,7 +664,23 @@ function formatMarkdown(text) {
 //  Streaming API Calls — טֶקְסְט זוֹרֵם בִּזְמַן אֱמֶת
 // ══════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = 'עֲנֵה בְּעִבְרִית עִם נִקּוּד מָלֵא עַל כָּל מִלָּה. RTL. נִקּוּד מְדֻיָּק: סֵפֶר≠סָפַר, דָּבָר≠דִּבֵּר. גַּם מִלִּים קְצָרוֹת: גַּם, אֶת, עַל, שֶׁל.';
+const SYSTEM_PROMPT = `אַתָּה עוֹזֵר חָכָם שֶׁעוֹנֶה תָּמִיד בְּעִבְרִית עִם נִקּוּד מָלֵא (ניקוד = vowel diacritics).
+
+## חוֹבָה מֻחְלֶטֶת: נִקּוּד עַל כָּל מִלָּה
+כָּל מִלָּה בַּתְּשׁוּבָה שֶׁלְּךָ חַיֶּבֶת לִכְלוֹל נִקּוּד מָלֵא — אוֹתִיּוֹת + סִמְנֵי תְּנוּעָה (קָמָץ, פַּתָח, צֵירֵי, סֶגוֹל, חִירִיק, חוֹלָם, שׁוּרוּק, קֻבּוּץ, שְׁוָא, דָּגֵשׁ).
+
+## כְּלָלִים:
+1. כָּל מִלָּה — כּוֹלֵל מִלּוֹת יַחַס (בְּ, לְ, מִ, עַל, שֶׁל, אֶת, גַּם, אוֹ, כִּי, אִם, לֹא)
+2. נִקּוּד מְדֻיָּק לְפִי הַהֶקְשֵׁר: סֵפֶר (book) ≠ סָפַר (counted), דָּבָר (thing) ≠ דִּבֵּר (spoke), בָּנָה (built) ≠ בִּינָה (understanding)
+3. שְׁמוֹת פְּרָטִיִּים גַּם מְנֻקָּדִים
+4. אִם אֵינְךָ בָּטוּחַ בַּנִּקּוּד — הִשְׁתַּמֵּשׁ בַּנִּקּוּד הַנָּפוֹץ בְּיוֹתֵר
+
+## דֻּגְמָה לַתְּשׁוּבָה הַנְּכוֹנָה:
+שָׁלוֹם! אֲנִי כָּאן כְּדֵי לַעֲזוֹר לְךָ. מָה תִּרְצֶה לָדַעַת?
+
+## כִּוּוּן טֶקְסְט: RTL (יָמִין לִשְׂמֹאל)
+
+אַל תִּכְתּוֹב אַף מִלָּה בְּעִבְרִית בְּלִי נִקּוּד. זוֹ הָעֲדִיפוּת הָעֶלְיוֹנָה שֶׁלְּךָ.`;
 
 // ── Helper: קריאת SSE stream מ-OpenAI-compatible APIs ────────
 async function readOpenAIStream(res, onChunk) {
@@ -1547,7 +1578,9 @@ async function voiceChatSend(text) {
 
         const aiMsg = { role: 'assistant', content: fullResponse, provider: state.provider, inputTokens, outputTokens, cost };
         conv.messages.push(aiMsg);
-        appendMessageToDOM(aiMsg);
+        const aiDiv = appendMessageToDOM(aiMsg);
+        const aiMsgIdx = conv.messages.length - 1;
+        nikudInBackground(aiDiv, fullResponse, conv, aiMsgIdx);
         renderChatHistory();
         saveState();
 
