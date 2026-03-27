@@ -1677,9 +1677,9 @@ async function voiceChatSend(text) {
 // ── Voice Chat: TTS עם זיהוי הפרעה ────────────────────────
 // ── ניקוי Markdown לטקסט דיבור ──────────────────────────────
 function cleanForSpeech(text) {
-    return text
+    let cleaned = text
         .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, '. קוֹד. ')
+        .replace(/```[\s\S]*?```/g, '. code. ')
         .replace(/`[^`]+`/g, '$1')
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
@@ -1688,80 +1688,235 @@ function cleanForSpeech(text) {
         .replace(/[⚠️🔥⚡⭐]/g, '')
         .replace(/\n+/g, '. ')
         .replace(/\.\s*\./g, '.');
+    // ★ המרה לתעתיק לועזי — TTS יקרא הברות במקום להתמודד עם ניקוד
+    return nikudToTranslit(cleaned);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ממיר ניקוד עברי → תעתיק לועזי פונטי (Transliteration)
+//  המנוע קורא אות+ניקוד ומייצר הברות לועזיות
+// ══════════════════════════════════════════════════════════════
+function nikudToTranslit(text) {
+    // אם אין עברית — החזר כמו שזה
+    if (!/[\u0590-\u05FF]/.test(text)) return text;
+
+    // ניקוד → צליל תנועה
+    const VOWELS = {
+        '\u05B7': 'a',   // פַּתָח patach
+        '\u05B8': 'a',   // קָמָץ kamatz (modern = a)
+        '\u05B6': 'e',   // סֶגוֹל segol
+        '\u05B5': 'e',   // צֵירֵי tsere
+        '\u05B4': 'i',   // חִירִיק chirik
+        '\u05B9': 'o',   // חוֹלָם cholam
+        '\u05BA': 'o',   // cholam chaser
+        '\u05BB': 'u',   // קֻבּוּץ kubutz
+        '\u05B0': '@',   // שְׁוָא — סימון מיוחד, נטפל בנפרד
+        '\u05B1': 'e',   // חטף סגול
+        '\u05B2': 'a',   // חטף פתח
+        '\u05B3': 'o',   // חטף קמץ
+    };
+
+    // אותיות עברית → צליל עיצור (בסיסי, ללא דגש)
+    const CONSONANTS = {
+        'א': '',    // אלף — שקט
+        'ב': 'v',   // בית ללא דגש
+        'ג': 'g',
+        'ד': 'd',
+        'ה': 'h',
+        'ו': 'v',
+        'ז': 'z',
+        'ח': 'kh',
+        'ט': 't',
+        'י': 'y',
+        'כ': 'kh',  // כף ללא דגש
+        'ך': 'kh',  // כף סופית
+        'ל': 'l',
+        'מ': 'm',
+        'ם': 'm',
+        'נ': 'n',
+        'ן': 'n',
+        'ס': 's',
+        'ע': '',    // עין — שקט
+        'פ': 'f',   // פא ללא דגש
+        'ף': 'f',
+        'צ': 'ts',
+        'ץ': 'ts',
+        'ק': 'k',
+        'ר': 'r',
+        'ש': 'sh',  // ברירת מחדל שין
+        'ת': 't',
+    };
+
+    const DAGESH = '\u05BC';  // דגש
+    const SHIN_DOT = '\u05C1'; // נקודה ימנית = שין
+    const SIN_DOT = '\u05C2';  // נקודה שמאלית = סין
+    const SHURUK = '\u05BC';   // שורוק (דגש בוא"ו) — נטפל בהקשר
+
+    let result = '';
+    const chars = [...text]; // פירוק נכון של Unicode
+
+    let i = 0;
+    while (i < chars.length) {
+        const ch = chars[i];
+        const code = ch.codePointAt(0);
+
+        // ── אם זה לא תו עברי — העבר כמו שזה ──
+        if (code < 0x0590 || code > 0x05FF) {
+            // סימני פיסוק ורווחים
+            result += ch;
+            i++;
+            continue;
+        }
+
+        // ── סימני ניקוד בודדים (לא צמודים לאות) — דלג ──
+        if (VOWELS[ch] !== undefined || ch === DAGESH || ch === SHIN_DOT || ch === SIN_DOT) {
+            i++;
+            continue;
+        }
+
+        // ── אות עברית ──
+        // אסוף את כל הסימנים שאחריה (ניקוד, דגש, shin/sin dot)
+        let vowel = '';
+        let hasDagesh = false;
+        let hasShinDot = false;
+        let hasSinDot = false;
+        let j = i + 1;
+        while (j < chars.length) {
+            const nc = chars[j];
+            const ncode = nc.codePointAt(0);
+            if (ncode < 0x0590 || ncode > 0x05FF) break;
+            if (VOWELS[nc] !== undefined) {
+                vowel = VOWELS[nc];
+                j++;
+            } else if (nc === DAGESH) {
+                hasDagesh = true;
+                j++;
+            } else if (nc === SHIN_DOT) {
+                hasShinDot = true;
+                j++;
+            } else if (nc === SIN_DOT) {
+                hasSinDot = true;
+                j++;
+            } else if (nc === '\u05BD' || nc === '\u05BF' || nc === '\u05C4' || nc === '\u05C5' || nc === '\u05C7') {
+                // סימנים נוספים — דלג
+                j++;
+            } else {
+                break; // אות הבאה
+            }
+        }
+
+        // ── קבע עיצור ──
+        let cons = CONSONANTS[ch] || '';
+
+        // דגש משנה צליל של ב/כ/פ
+        if (ch === 'ב' && hasDagesh) cons = 'b';
+        if (ch === 'כ' && hasDagesh) cons = 'k';
+        if ((ch === 'פ' || ch === 'ף') && hasDagesh) cons = 'p';
+
+        // שין/סין
+        if (ch === 'ש') {
+            if (hasSinDot) cons = 's';
+            else cons = 'sh'; // ברירת מחדל או shin dot
+        }
+
+        // וא"ו: שורוק (וּ) = u, חולם מלא (וֹ) = o, וו עם דגש = וּ
+        if (ch === 'ו') {
+            if (hasDagesh && !vowel) {
+                // שורוק
+                cons = '';
+                vowel = 'u';
+            } else if (vowel === 'o') {
+                cons = '';
+                // cholam male — כבר vowel=o
+            } else if (!vowel && !hasDagesh) {
+                // וו ללא ניקוד — כנראה /v/
+                cons = 'v';
+            }
+        }
+
+        // יו"ד: חיריק מלא (יִ) — אם היו"ד בתחילת מילה, השאר y; אחרת בלע
+        if (ch === 'י' && vowel === 'i') {
+            // בדוק אם התו הקודם הוא רווח/תחילה — אז זה עיצור y
+            const prevIsSpace = result.length === 0 || /[\s.,;:!?\-]$/.test(result);
+            if (!prevIsSpace) {
+                cons = ''; // אם קריאה — בלע את היו"ד
+            }
+            // אם תחילת מילה — cons='y' נשאר
+        }
+
+        // ★ חיריק מלא / צירי מלא — יו"ד כאם קריאה
+        // אם האות הנוכחית יש לה חיריק (i) או צירי (e) והתו הבא הוא יו"ד ללא ניקוד — דלג על היו"ד
+        if ((vowel === 'i' || vowel === 'e') && ch !== 'י' && j < chars.length) {
+            // בדוק אם התו הבא הוא יו"ד
+            let peekJ = j;
+            if (chars[peekJ] === 'י') {
+                // בדוק שאין ליו"ד ניקוד עצמאי
+                let peekK = peekJ + 1;
+                let yodHasVowel = false;
+                while (peekK < chars.length) {
+                    const pc = chars[peekK];
+                    const pcode = pc.codePointAt(0);
+                    if (pcode < 0x0590 || pcode > 0x05FF) break;
+                    if (VOWELS[pc] !== undefined) { yodHasVowel = true; break; }
+                    if (pc === DAGESH || pc === SHIN_DOT || pc === SIN_DOT ||
+                        pc === '\u05BD' || pc === '\u05BF' || pc === '\u05C4' || pc === '\u05C5' || pc === '\u05C7') {
+                        peekK++; continue;
+                    }
+                    break;
+                }
+                if (!yodHasVowel) {
+                    // דלג על יו"ד — היא אם קריאה
+                    j = peekK;
+                }
+            }
+        }
+
+        // שווא — שקט בסוף מילה, נע בתחילה/אמצע
+        if (vowel === '@') {
+            // בדוק אם זה סוף מילה
+            const nextIsSpace = j >= chars.length || !/[\u0590-\u05FF]/.test(chars[j]);
+            if (nextIsSpace) {
+                vowel = ''; // שווא נח — שקט
+            } else {
+                vowel = 'e'; // שווא נע — "e" קצר
+            }
+        }
+
+        // אם אין תנועה ואין עיצור (אלף/עין) — דלג
+        if (!cons && !vowel) {
+            // אלף/עין ללא ניקוד — שקט
+        }
+
+        result += cons + vowel;
+        i = j;
+    }
+
+    // ניקוי: מקפים כפולים, רווחים מיותרים
+    return result
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 // ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
-const TTS_HEBREW_INSTRUCTIONS = `ABSOLUTE RULE #1: Read the EXACT text given to you, word for word. Do NOT paraphrase, summarize, skip words, add words, or change the order. You are a TEXT READER, not a conversationalist. Read what is written — nothing more, nothing less.
+const TTS_HEBREW_INSTRUCTIONS = `You are reading Hebrew text that has been transliterated into Latin phonetic script. Read it EXACTLY as written — each syllable as a natural Hebrew sound.
 
-RULE #2: You are a native Hebrew speaker. Pronounce every word EXACTLY according to its nikud marks (vowel diacritics). The nikud is the ONLY authority for pronunciation — never guess or use default pronunciation.
-Vowel rules:
-- קָמָץ (kamatz) = "a" as in "car". פָּ = "pa", not "po".
-- פַּתָח (patach) = "a" as in "cat". בַּ = "ba".
-- צֵירֵי (tsere) = "e" as in "they". סֵפֶר = "SEfer".
-- סֶגוֹל (segol) = "e" as in "bed". מֶלֶךְ = "MElekh".
-- חִירִיק (chirik) = "i" as in "see". דִּין = "din".
-- חוֹלָם (cholam) = "o" as in "go". שָׁלוֹם = "shaLOM".
-- שׁוּרוּק/קוּבּוּץ (shuruk/kubutz) = "u" as in "blue". שׁוּק = "shuk".
-- שְׁוָא נָע (shva na) = very short "e". בְּ = "be-", not "b". לְ = "le-".
-- שְׁוָא נָח (shva nach) = silent. No vowel sound.
-- דָּגֵשׁ חָזָק doubles the consonant: שַׁבָּת = "shab-BAT".
-- חָטָף vowels: חֲ = short "a", חֱ = short "e", חֳ = short "o".
-Consonant rules:
-- בּ (with dagesh) = "b", ב (without) = "v".
-- כּ (with dagesh) = "k", כ (without) = "kh".
-- פּ (with dagesh) = "p", פ (without) = "f".
-- ת always = "t" in modern Hebrew.
-- ע and א are glottal stops.
+CRITICAL RULES:
+1. Read the EXACT text given to you, word for word. Do NOT add, skip, change, or paraphrase anything.
+2. The text uses phonetic Latin spelling of Hebrew words. Pronounce each word as written.
+3. "kh" = the guttural "ch" sound (like Bach). "ts" = צ sound. "sh" = ש sound. "a" = ah. "e" = eh. "i" = ee. "o" = oh. "u" = oo.
+4. Periods and commas mean natural pauses — breathe there.
+5. Read with warmth and expression, like a podcast host. Vary your pitch and emphasis naturally.
+6. Some Hebrew words may still appear — read them naturally in Hebrew.
 
-CRITICAL — שׁ (SHIN) vs שׂ (SIN):
-The letter ש has TWO completely different sounds depending on the dot position:
-- שׁ (dot on RIGHT = שִׁין / Shin) = "sh" as in "show". Example: שָׁלוֹם = "shaLOM", שֶׁמֶשׁ = "SHEmesh", שָׁנָה = "shaNAH", לָשׁוֹן = "laSHON", שִׁיר = "SHIR", שֶׁקֶר = "SHEker"
-- שׂ (dot on LEFT = שִׂין / Sin) = "s" as in "sun". Example: שָׂדֶה = "saDEH", שָׂפָה = "saFAH", יִשְׂרָאֵל = "yisraEL", שָׂמֵחַ = "saMEach", שְׂמֹאל = "SMOL", לָשׂוּם = "laSUM", עָשָׂה = "aSAH"
-This is NOT optional — saying "sh" when it should be "s" (or vice versa) is a WRONG pronunciation.
-Key pairs to distinguish:
-- שָׁם "SHAM" (there) vs שָׂם "SAM" (put/placed)
-- שָׁר "SHAR" (sang) vs שַׂר "SAR" (minister)
-- שֶׁה "SEH" (lamb) vs שֵׂה... — always check the dot!
-- מַשָּׁא "maSAH" (burden) vs מַשָּׂא "maSAH" — dot position matters!
-- When you see שׂ (left dot), ALWAYS say "s", NEVER "sh".
-- When you see שׁ (right dot), ALWAYS say "sh", NEVER "s".
-
-Minimal pairs — MUST distinguish:
-- סֵפֶר "SEfer" (book) vs סָפַר "saFAR" (counted)
-- דָּבָר "daVAR" (thing) vs דִּבֵּר "diBER" (spoke)
-- בָּנָה "baNAH" (built) vs בִּינָה "biNAH" (understanding)
-- עָבַר "aVAR" (passed) vs עוֹבֵר "oVER" (passing)
-- קָרָא "kaRA" (read) vs קוֹרֵא "koRE" (reader)
-- שָׁם "SHAM" (there) vs שָׂם "SAM" (placed) — shin vs sin!
-Stress: Follow nikud. Milra (last syllable) is default. Mil'el only when nikud indicates it.
-
-DELIVERY STYLE — PODCAST-QUALITY NATURAL SPEECH:
-You are NOT a text-to-speech robot. You are a warm, engaging Hebrew podcast host having a real conversation. Think NotebookLM podcast style.
-
-Emotional expression & prosody:
-- VARY your pitch naturally throughout sentences. Go UP when introducing something exciting, DOWN when concluding a thought.
-- Use EMPHASIS on key words — the important nouns, verbs, and adjectives should stand out. Not every word has the same weight.
-- Add micro-pauses (commas, dashes) between thought units. Don't rush through sentences like a machine.
-- When listing items, give each item its own rhythm and slight pause. Don't monotonically list them.
-- Questions should have a rising intonation at the end — make them sound like real questions.
-- Exclamations should sound genuinely enthusiastic, not flat.
-- When explaining something complex, slow down slightly. When the content is light, speed up naturally.
-
-Hebrew-specific natural speech patterns:
-- Use natural Hebrew sentence rhythm (stress-timed, not syllable-timed).
-- Hebrew has a natural "singing" quality — let the melody of the language flow.
-- Word-final stress (milra) should feel natural, not forced.
-- Connective words (וְ, שֶׁ, כִּי) should flow smoothly into the next word, not stand alone.
-- Breathe between clauses — real speakers pause to breathe and think.
-
-What to AVOID:
-- Monotone flat reading — NEVER read like a GPS navigation system.
-- Equal emphasis on every word — some words matter more than others.
-- Rushing through text — take your time, let ideas land.
-- Robotic rhythm — vary your speed, pause, emphasize.
-- Reading punctuation — a period means a brief pause and falling tone, not a full stop in your flow.
-
-Think of yourself as a knowledgeable friend explaining something fascinating over coffee. Be warm, be genuine, be engaging.`;
+DELIVERY STYLE — WARM, NATURAL, PODCAST-QUALITY:
+- You are a warm, engaging podcast host — NOT a robotic text reader.
+- VARY your pitch: go UP when introducing something exciting, DOWN when concluding.
+- EMPHASIZE key words naturally. Not every word has the same weight.
+- Pause at commas and periods — breathe like a real person.
+- Questions = rising intonation. Exclamations = genuine enthusiasm.
+- Slow down for complex ideas, speed up for light content.
+- Think NotebookLM podcast style — a knowledgeable friend explaining over coffee.
+- NEVER read monotonically like a GPS. Vary speed, rhythm, emphasis.`;
 
 let currentAudio = null;
 
