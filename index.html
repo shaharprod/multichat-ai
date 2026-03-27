@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MultiChat AI — צ'אט עם כל מודל AI</title>
-    <link rel="stylesheet" href="style.css?v=20260327n">
+    <link rel="stylesheet" href="style.css?v=20260327p">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Hebrew:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
@@ -399,13 +399,20 @@
             </div>
             <div class="voice-chat-status" id="voiceChatStatus">מאזין...</div>
             <div class="voice-chat-hint">דברו — AI יענה בקול. Esc לסיום</div>
-            <button class="voice-chat-end-btn" id="endVoiceChatBtn">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                סיום שיחה
-            </button>
+            <div class="voice-chat-buttons">
+                <button class="voice-chat-mute-btn" id="muteVoiceChatBtn" title="השתק מיקרופון">
+                    <svg class="mute-icon-off" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4M8 23h8"/></svg>
+                    <svg class="mute-icon-on" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M1 1l22 22"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/><path d="M12 19v4M8 23h8"/></svg>
+                    <span class="mute-label">השתק</span>
+                </button>
+                <button class="voice-chat-end-btn" id="endVoiceChatBtn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    סיום שיחה
+                </button>
+            </div>
         </div>
     </div>
 
-    <script src="app.js?v=20260327n"></script>
+    <script src="app.js?v=20260327p"></script>
 </body>
 </html>
