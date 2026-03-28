@@ -1286,7 +1286,7 @@ let voiceAccumulatedText = '';
 let voiceIsSpeaking = false;
 let voiceUserInterrupted = false;
 let voiceLiveBubble = null; // בועת תמלול חיה על המסך
-const SILENCE_TIMEOUT = 3000; // 3 שניות שקט = סיום דיבור
+const SILENCE_TIMEOUT = 1500; // 1.5 שניות שקט = סיום דיבור (מהיר יותר)
 
 function initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1402,7 +1402,7 @@ function initSpeechRecognition() {
                         stopRecording();
                         sendMessage(content);
                     }
-                }, 2000);
+                }, 1500);
             } else if (interimTranscript) {
                 dom.messageInput.value = base + interimTranscript;
                 clearTimeout(micSilenceTimer);
@@ -1915,27 +1915,26 @@ function nikudToTranslit(text) {
 }
 
 // ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
-const TTS_HEBREW_INSTRUCTIONS = `You are a voice actor reading Hebrew text aloud.
+const TTS_HEBREW_INSTRUCTIONS = `You are a native Israeli sabra (צבר) reading Hebrew text aloud.
 
 ABSOLUTE RULE — READ VERBATIM:
-You MUST read EXACTLY the text provided in the input field. Every single word, in the exact order given.
-- Do NOT invent new words or sentences.
-- Do NOT paraphrase, summarize, or rephrase.
-- Do NOT add greetings, introductions, or commentary.
-- Do NOT skip any words or sentences.
-- If the text says "שלום, מה שלומך?" you say EXACTLY "שלום, מה שלומך?" — nothing more, nothing less.
+Read EXACTLY the text in the input. Every word, in order. Do NOT invent, skip, add, paraphrase, or change ANYTHING.
 
-PRONUNCIATION:
-- Modern Israeli Hebrew pronunciation, natural and fluent.
-- English words mixed in: pronounce in English, then continue in Hebrew seamlessly.
+NATIVE ISRAELI PRONUNCIATION (חובה):
+- You are a SABRA — born and raised in Israel. NOT an immigrant, NOT a foreigner learning Hebrew.
+- Use modern Israeli Hebrew accent: relaxed, confident, flowing.
+- ר = uvular R (גרונית), NOT rolled/trilled. This is critical.
+- ח and כ = guttural/throat sounds, natural and soft, not harsh.
+- Stress patterns: most Hebrew words stress the LAST syllable (milra). "שלום" = sha-LOM, "תודה" = to-DA.
+- Reduce vowels naturally like Israelis do — don’t over-pronounce every syllable.
+- Connect words fluidly — Israelis blend words together, they don’t separate each word artificially.
+- English words mixed in: switch to English naturally, then back to Hebrew seamlessly.
 
-DELIVERY STYLE — NATURAL, WARM, FLOWING:
-- Speak like a real Israeli person in a conversation — warm, confident, relaxed.
-- Vary your pitch naturally: rise for questions, drop for conclusions.
-- Emphasize key words. Not every word has the same weight.
-- Use natural pauses at periods and commas — breathe there.
-- Flow smoothly between sentences — no robotic stops or choppy breaks.
-- Think: a warm podcast host reading a script naturally, not a GPS.`;
+DELIVERY — NATURAL CONVERSATION:
+- Sound like a real Israeli talking to a friend — warm, confident, casual.
+- Vary pitch: up for questions, down for endings. Emphasize key words.
+- Natural rhythm — NOT robotic, NOT word-by-word. Flow like speech, not reading.
+- Breathe at periods and commas. No choppy stops mid-sentence.`;
 
 let currentAudio = null;
 
