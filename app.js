@@ -676,20 +676,26 @@ async function sendMessage(content) {
 
 // ── פורמט Markdown בסיסי ─────────────────────────────────────
 function formatMarkdown(text) {
+    // טיפול בבלוקי קוד ``` לפני escaping
     const codeBlocks = [];
     let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
         const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
         codeBlocks.push(`<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(code.trim())}</code></pre>`);
         return placeholder;
     });
+
+    // escape ו-markdown על הטקסט הרגיל
     processed = escapeHtml(processed)
         .replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`)
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
         .replace(/\n/g, '<br>');
+
+    // החזר בלוקי קוד למקומם
     codeBlocks.forEach((block, i) => {
         processed = processed.replace(`__CODE_BLOCK_${i}__`, block);
     });
+
     return processed;
 }
 
@@ -1265,6 +1271,12 @@ function bindEvents() {
 let recognition = null;
 let isRecording = false;
 let micSilenceTimer = null; // טיימר שקט למיקרופון רגיל
+let sttRunning = false; // מעקב אם recognition באמת רץ
+let restartAttempts = 0; // מונה ניסיונות restart
+let restartTimer = null; // טיימר restart
+const MAX_RESTART_ATTEMPTS = 3;
+let micStream = null; // ★ שומר stream פתוח — מונע לופ הרשאות ב-file://
+let micPermissionGranted = false; // ★ דגל הרשאה
 
 // ── Voice Chat Mode ─────────────────────────────────────────
 let voiceChatActive = false;
@@ -1284,22 +1296,19 @@ function initSpeechRecognition() {
         return;
     }
 
-    // ── יצירת recognition חדש (נקרא גם ב-rebuild) ──
-    function createRecognition() {
-        const rec = new SpeechRecognition();
-        rec.lang = 'he-IL';
-        rec.interimResults = true;
-        rec.continuous = false; // continuous=false יציב יותר — restart ידני ב-onend
-        rec.maxAlternatives = 1;
-        return rec;
-    }
+    const isFileProtocol = location.protocol === 'file:';
 
-    recognition = createRecognition();
+    // ── יצירת recognition אחד ויחיד ──
+    recognition = new SpeechRecognition();
+    recognition.lang = 'he-IL';
+    recognition.interimResults = true;
+    recognition.continuous = true; // ★ חשוב — לא נגמר לבד
+    recognition.maxAlternatives = 1;
 
+    // ── onresult handler ──
     recognition.onresult = (event) => {
         // ★ מניעת echo — אם AI מדבר או מיקרופון מושתק, התעלם מכל קלט
         if ((voiceIsSpeaking || voiceMuted) && voiceChatActive) {
-            console.log('[MultiChat STT] ⚠️ קלט נחסם —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
             return;
         }
 
@@ -1317,7 +1326,6 @@ function initSpeechRecognition() {
 
         // ── מצב שיחה קולית ──
         if (voiceChatActive) {
-            // המשתמש מדבר — עצור את ה-AI אם הוא מדבר
             if ((interimTranscript || finalTranscript) && voiceIsSpeaking) {
                 stopCurrentAudio();
                 speechSynthesis.cancel();
@@ -1326,10 +1334,8 @@ function initSpeechRecognition() {
                 updateVoiceChatStatus('מַאֲזִין...');
             }
 
-            // אפס טיימר שקט בכל דיבור
             clearTimeout(voiceSilenceTimer);
 
-            // ── בועת תמלול חיה על המסך ──
             if (!voiceLiveBubble) {
                 voiceLiveBubble = document.createElement('div');
                 voiceLiveBubble.className = 'message user-message';
@@ -1357,10 +1363,8 @@ function initSpeechRecognition() {
 
             updateVoiceChatStatus('מאזין: ' + (voiceAccumulatedText + interimTranscript).slice(-60));
 
-            // התחל טיימר שקט — אם אין דיבור 3 שניות, שלח
             voiceSilenceTimer = setTimeout(() => {
                 if (voiceChatActive && voiceAccumulatedText.trim()) {
-                    // הסר בועה חיה — voiceChatSend ייצור את הבועה הסופית
                     if (voiceLiveBubble) {
                         voiceLiveBubble.remove();
                         voiceLiveBubble = null;
@@ -1375,7 +1379,6 @@ function initSpeechRecognition() {
 
         // ── מצב רגיל (לא Voice Chat) ──
         if (dom.messageInput) {
-            // שמור את הבסיס רק פעם אחת בתחילת ההקלטה
             if (dom.messageInput.dataset.baseText === undefined || dom.messageInput.dataset.baseText === '') {
                 dom.messageInput.dataset.baseText = dom.messageInput.value || '';
             }
@@ -1383,16 +1386,13 @@ function initSpeechRecognition() {
 
             if (finalTranscript) {
                 console.log('[MultiChat Mic] טקסט סופי:', finalTranscript);
-                // טקסט סופי — הוסף לבסיס ועדכן
                 dom.messageInput.value = base + finalTranscript;
                 dom.messageInput.dataset.baseText = dom.messageInput.value;
                 dom.sendBtn.disabled = false;
 
-                // שלח אוטומטית אחרי 2 שניות שקט
                 clearTimeout(micSilenceTimer);
                 micSilenceTimer = setTimeout(() => {
                     if (isRecording && dom.messageInput.value.trim()) {
-                        console.log('[MultiChat Mic] שולח אוטומטית:', dom.messageInput.value.trim());
                         const content = dom.messageInput.value.trim();
                         dom.messageInput.value = '';
                         dom.messageInput.dataset.baseText = '';
@@ -1403,110 +1403,112 @@ function initSpeechRecognition() {
                     }
                 }, 2000);
             } else if (interimTranscript) {
-                console.log('[MultiChat Mic] ביניים:', interimTranscript);
-                // טקסט ביניים — הצג אבל אל תשמור לבסיס
                 dom.messageInput.value = base + interimTranscript;
-                // אפס טיימר שקט — עדיין מדברים
                 clearTimeout(micSilenceTimer);
             }
             dom.charCount.textContent = dom.messageInput.value.length;
         }
     };
 
-    // ── מנגנון restart חכם ──
-    let restartTimer = null;
-    let skipNextRestart = false; // דגל למניעת restart אחרי abort ידני
-
-    // עצירה נקייה + start חדש — ללא התנגשויות
-    function cleanStart() {
-        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
-        // ★ אם AI מדבר או muted — אל תפעיל STT בכלל
-        if (voiceIsSpeaking || voiceMuted) {
-            console.log('[MultiChat STT] cleanStart ביטול —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
+    // ── onerror — עצירה מוחלטת בשגיאת הרשאה ──
+    recognition.onerror = (event) => {
+        console.log('[MultiChat STT] שגיאה:', event.error);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            micPermissionGranted = false;
+            sttRunning = false;
+            isRecording = false;
+            voiceChatActive = false;
+            if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+            const micBtn = $('#micBtn');
+            if (micBtn) micBtn.classList.remove('recording');
+            alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
             return;
         }
-        skipNextRestart = true;
-        try { recognition.abort(); } catch {}
-        restartTimer = setTimeout(() => {
-            restartTimer = null;
-            skipNextRestart = false;
-            if (!isRecording && !voiceChatActive) return;
-            // ★ בדיקה נוספת
-            if (voiceIsSpeaking || voiceMuted) {
-                console.log('[MultiChat STT] cleanStart timeout — לא מפעיל');
-                return;
-            }
-            try {
-                recognition.start();
-                console.log('[MultiChat STT] הופעל בהצלחה');
-            } catch(e) {
-                console.warn('[MultiChat STT] start נכשל:', e.message);
-                // בנה recognition חדש ונסה שוב
-                recognition = createRecognition();
-                attachRecognitionHandlers();
-                setTimeout(() => {
-                    if ((isRecording || voiceChatActive) && !voiceIsSpeaking && !voiceMuted) {
-                        try { recognition.start(); } catch(e2) { console.error('[MultiChat STT] נכשל סופית:', e2); }
-                    }
-                }, 500);
-            }
-        }, 400);
-    }
+        // no-speech, aborted, audio-capture — לא עושים כלום, onend יטפל
+    };
 
-    function attachRecognitionHandlers() {
-        recognition.onresult = onResultHandler;
+    // ── onend — ★ לעולם לא restart ב-file:// ★ ──
+    recognition.onend = () => {
+        const wasRunning = sttRunning;
+        sttRunning = false;
+        console.log('[MultiChat STT] onend — rec:', isRecording, 'vc:', voiceChatActive);
 
-        recognition.onerror = (event) => {
-            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-                alert('גישה למיקרופון נדחתה. אנא אפשרו גישה בהגדרות הדפדפן.');
-                stopRecording();
-                return;
-            }
-            // aborted, no-speech, audio-capture — onend יטפל
-            console.log('[MultiChat STT] שגיאה:', event.error);
-        };
+        // אם לא צריכים להקשיב — סיימנו
+        if (!isRecording && !voiceChatActive) return;
 
-        recognition.onend = () => {
-            console.log('[MultiChat STT] onend — skip:', skipNextRestart, 'rec:', isRecording, 'vc:', voiceChatActive, 'speaking:', voiceIsSpeaking);
-            if (skipNextRestart) { skipNextRestart = false; return; }
-            // ★ אם ה-AI מדבר או muted — אל תפעיל מחדש את ה-STT
-            if (voiceIsSpeaking || voiceMuted) {
-                console.log('[MultiChat STT] מיקרופון נשאר כבוי —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
-                return;
-            }
-            if (isRecording || voiceChatActive) {
-                // restart פשוט אחרי 400ms
-                if (!restartTimer) {
-                    restartTimer = setTimeout(() => {
-                        restartTimer = null;
-                        if (!isRecording && !voiceChatActive) return;
-                        // ★ בדיקה נוספת — אל תפעיל STT אם AI מדבר או muted
-                        if (voiceIsSpeaking || voiceMuted) {
-                            console.log('[MultiChat STT] לא מפעיל מיקרופון —', voiceIsSpeaking ? 'AI מדבר' : 'Muted');
-                            return;
-                        }
-                        try {
-                            recognition.start();
-                            console.log('[MultiChat STT] restart הצליח');
-                        } catch(e) {
-                            console.warn('[MultiChat STT] restart נכשל — cleanStart');
-                            cleanStart();
-                        }
-                    }, 400);
+        // ★★★ ב-file:// לעולם לא עושים restart — זה מה שיוצר את הלופ ★★★
+        if (isFileProtocol) {
+            console.log('[MultiChat STT] file:// — לא עושה restart (מונע לופ הרשאות)');
+            // עדכן UI שהמיקרופון כבה
+            isRecording = false;
+            const micBtn = $('#micBtn');
+            if (micBtn) micBtn.classList.remove('recording');
+            // אם ב-voice chat, המשתמש צריך ללחוץ שוב
+            return;
+        }
+
+        // ב-localhost/https — אפשר restart מבוקר (הרשאה נשמרת)
+        if (voiceIsSpeaking || voiceMuted) return;
+        if (!micPermissionGranted) return;
+
+        restartAttempts++;
+        if (restartAttempts > MAX_RESTART_ATTEMPTS) {
+            console.warn('[MultiChat STT] יותר מדי restarts — עוצר');
+            restartAttempts = 0;
+            isRecording = false;
+            const micBtn = $('#micBtn');
+            if (micBtn) micBtn.classList.remove('recording');
+            return;
+        }
+
+        if (!restartTimer) {
+            restartTimer = setTimeout(() => {
+                restartTimer = null;
+                if (!isRecording && !voiceChatActive) return;
+                if (sttRunning) return;
+                try {
+                    recognition.start();
+                    sttRunning = true;
+                } catch(e) {
+                    console.warn('[MultiChat STT] restart נכשל:', e.message);
+                    sttRunning = false;
                 }
-            }
-        };
+            }, 800);
+        }
+    };
 
-        recognition.onstart = () => {
-            console.log('[MultiChat STT] מאזין ✓');
-        };
+    // ── onstart ──
+    recognition.onstart = () => {
+        sttRunning = true;
+        micPermissionGranted = true;
+        restartAttempts = 0;
+        console.log('[MultiChat STT] מאזין ✓');
+    };
+
+    // ── cleanStart — הפעלה בודדת, בלי abort+restart ──
+    async function cleanStart() {
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+
+        if (voiceIsSpeaking || voiceMuted) return;
+
+        // ★ אם כבר רץ — לא עושים כלום! (מונע abort → start → הרשאה)
+        if (sttRunning) {
+            console.log('[MultiChat STT] כבר רץ — ממשיכים');
+            return;
+        }
+
+        // start פעם אחת בלבד
+        try {
+            recognition.start();
+            sttRunning = true;
+            console.log('[MultiChat STT] הופעל');
+        } catch(e) {
+            console.warn('[MultiChat STT] start נכשל:', e.message);
+            sttRunning = false;
+            // אם נכשל — לא מנסים שוב (מונע לופ)
+        }
     }
 
-    // שמור reference ל-onresult handler וחבר את כל ה-handlers
-    const onResultHandler = recognition.onresult;
-    attachRecognitionHandlers();
-
-    // חשוף cleanStart לשימוש חיצוני
     window._sttCleanStart = cleanStart;
 }
 
@@ -1691,17 +1693,19 @@ async function voiceChatSend(text) {
 function cleanForSpeech(text) {
     let cleaned = text
         .replace(/<[^>]*>/g, '')
-        .replace(/```[\s\S]*?```/g, '. code. ')
-        .replace(/`[^`]+`/g, '$1')
+        .replace(/```[\s\S]*?```/g, '')           // הסר בלוקי קוד לגמרי
+        .replace(/`([^`]+)`/g, '$1')               // inline code → טקסט רגיל
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
         .replace(/#{1,6}\s/g, '')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/[⚠️🔥⚡⭐]/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // לינקים → טקסט בלבד
+        .replace(/[⚠️🔥⚡⭐🎯💡📌🔑✅❌➡️•\-]{1,3}/g, '')  // אימוג'י וסימנים
         .replace(/\n+/g, '. ')
-        .replace(/\.\s*\./g, '.');
-    // ★ המרה לתעתיק לועזי — TTS יקרא הברות במקום להתמודד עם ניקוד
-    return nikudToTranslit(cleaned);
+        .replace(/\.\s*\./g, '.')
+        .replace(/\s+/g, ' ')
+        .trim();
+    // ★ שולחים עברית ישירות — OpenAI TTS קורא עברית מצוין בלי תעתיק
+    return cleaned;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1910,25 +1914,23 @@ function nikudToTranslit(text) {
 }
 
 // ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
-const TTS_HEBREW_INSTRUCTIONS = `You are reading Hebrew text that has been transliterated into Latin phonetic script. Read it EXACTLY as written — each syllable as a natural Hebrew sound.
+const TTS_HEBREW_INSTRUCTIONS = `You are reading Hebrew text aloud. Read it naturally, like a native Israeli Hebrew speaker.
 
 CRITICAL RULES:
 1. Read the EXACT text given to you, word for word. Do NOT add, skip, change, or paraphrase anything.
-2. The text uses phonetic Latin spelling of Hebrew words. Pronounce each word as written.
-3. "kh" = the guttural "ch" sound (like Bach). "ts" = צ sound. "sh" = ש sound. "a" = ah. "e" = eh. "i" = ee. "o" = oh. "u" = oo.
-4. Periods and commas mean natural pauses — breathe there.
-5. Read with warmth and expression, like a podcast host. Vary your pitch and emphasis naturally.
-6. Some Hebrew words may still appear — read them naturally in Hebrew.
+2. Pronounce all Hebrew words with natural modern Israeli pronunciation.
+3. If English words appear mixed in, pronounce them naturally in English, then continue in Hebrew.
+4. Periods and commas = natural pauses. Breathe there.
 
 DELIVERY STYLE — WARM, NATURAL, PODCAST-QUALITY:
 - You are a warm, engaging podcast host — NOT a robotic text reader.
+- Speak like a real Israeli person having a conversation — natural, relaxed, confident.
 - VARY your pitch: go UP when introducing something exciting, DOWN when concluding.
 - EMPHASIZE key words naturally. Not every word has the same weight.
-- Pause at commas and periods — breathe like a real person.
 - Questions = rising intonation. Exclamations = genuine enthusiasm.
 - Slow down for complex ideas, speed up for light content.
 - Think NotebookLM podcast style — a knowledgeable friend explaining over coffee.
-- NEVER read monotonically like a GPS. Vary speed, rhythm, emphasis.`;
+- NEVER read monotonically like a GPS or Waze. Vary speed, rhythm, emphasis.`;
 
 let currentAudio = null;
 
@@ -2117,7 +2119,10 @@ function stopVoiceChat() {
 
     // עצור מיקרופון
     isRecording = false;
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     try { recognition.stop(); } catch(e) {}
+    sttRunning = false;
+    restartAttempts = 0;
 
     // הסתר ממשק
     const overlay = $('#voiceChatOverlay');
@@ -2140,10 +2145,14 @@ function stopRecording() {
     if (!recognition) return;
     isRecording = false;
     clearTimeout(micSilenceTimer);
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     const micBtn = $('#micBtn');
     if (micBtn) micBtn.classList.remove('recording');
     if (dom.messageInput) delete dom.messageInput.dataset.baseText;
     try { recognition.stop(); } catch(e) {}
+    sttRunning = false;
+    restartAttempts = 0;
+    // ★ לא משחררים את micStream — שומרים הרשאה פתוחה
 }
 
 function toggleRecording() {
@@ -2190,7 +2199,7 @@ async function speakText(text, button) {
     // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
-    utterance.rate = state.ttsSpeed || 1.0;h
+    utterance.rate = state.ttsSpeed || 1.0;
     const voices = speechSynthesis.getVoices();
     const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
     if (heVoice) utterance.voice = heVoice;
