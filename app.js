@@ -111,6 +111,7 @@ let state = {
     claudeProxy: '',
     ttsVoice: 'nova',
     ttsSpeed: 1.0,
+    ttsModel: 'tts-1-hd',  // tts-1-hd = קריאה מדויקת מילה-במילה; gpt-4o-mini-tts = גנרטיבי (עלול לשנות טקסט)
     isStreaming: false,
     // מעקב הוצאות
     budget: {
@@ -1532,10 +1533,9 @@ async function ttsPlayNext() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                 body: JSON.stringify({
-                    model: 'gpt-4o-mini-tts',
+                    model: state.ttsModel || 'tts-1-hd',
                     input: cleanText.slice(0, 4096),
                     voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
-                    instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
             if (res.ok) {
@@ -1943,10 +1943,9 @@ async function openAiTTS(text) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: 'gpt-4o-mini-tts',
+                model: state.ttsModel || 'tts-1-hd',
                 input: text.slice(0, 4096),
                 voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
-                instructions: TTS_HEBREW_INSTRUCTIONS,
             }),
         });
         if (!res.ok) return false;
@@ -2000,10 +1999,9 @@ async function voiceSpeak(text) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                 body: JSON.stringify({
-                    model: 'gpt-4o-mini-tts',
+                    model: state.ttsModel || 'tts-1-hd',
                     input: cleanText.slice(0, 4096),
                     voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
-                    instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
             if (res.ok) {
@@ -2182,7 +2180,7 @@ async function speakText(text, button) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0, instructions: TTS_HEBREW_INSTRUCTIONS }),
+                body: JSON.stringify({ model: state.ttsModel || 'tts-1-hd', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0 }),
             });
             if (res.ok) {
                 const blob = await res.blob();
