@@ -111,7 +111,7 @@ let state = {
     claudeProxy: '',
     ttsVoice: 'nova',
     ttsSpeed: 1.0,
-    ttsModel: 'tts-1-hd',  // tts-1-hd = קריאה מדויקת מילה-במילה; gpt-4o-mini-tts = גנרטיבי (עלול לשנות טקסט)
+    ttsModel: 'gpt-4o-mini-tts',  // gpt-4o-mini-tts = קול אנושי טבעי; tts-1-hd = רובוטי אבל מדויק
     isStreaming: false,
     // מעקב הוצאות
     budget: {
@@ -1533,9 +1533,10 @@ async function ttsPlayNext() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                 body: JSON.stringify({
-                    model: state.ttsModel || 'tts-1-hd',
+                    model: state.ttsModel || 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
                     voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
+                    instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
             if (res.ok) {
@@ -1914,23 +1915,27 @@ function nikudToTranslit(text) {
 }
 
 // ── OpenAI TTS — הוראות קריאת ניקוד מפורטות ─────────────────
-const TTS_HEBREW_INSTRUCTIONS = `You are reading Hebrew text aloud. Read it naturally, like a native Israeli Hebrew speaker.
+const TTS_HEBREW_INSTRUCTIONS = `You are a voice actor reading Hebrew text aloud.
 
-CRITICAL RULES:
-1. Read the EXACT text given to you, word for word. Do NOT add, skip, change, or paraphrase anything.
-2. Pronounce all Hebrew words with natural modern Israeli pronunciation.
-3. If English words appear mixed in, pronounce them naturally in English, then continue in Hebrew.
-4. Periods and commas = natural pauses. Breathe there.
+ABSOLUTE RULE — READ VERBATIM:
+You MUST read EXACTLY the text provided in the input field. Every single word, in the exact order given.
+- Do NOT invent new words or sentences.
+- Do NOT paraphrase, summarize, or rephrase.
+- Do NOT add greetings, introductions, or commentary.
+- Do NOT skip any words or sentences.
+- If the text says "שלום, מה שלומך?" you say EXACTLY "שלום, מה שלומך?" — nothing more, nothing less.
 
-DELIVERY STYLE — WARM, NATURAL, PODCAST-QUALITY:
-- You are a warm, engaging podcast host — NOT a robotic text reader.
-- Speak like a real Israeli person having a conversation — natural, relaxed, confident.
-- VARY your pitch: go UP when introducing something exciting, DOWN when concluding.
-- EMPHASIZE key words naturally. Not every word has the same weight.
-- Questions = rising intonation. Exclamations = genuine enthusiasm.
-- Slow down for complex ideas, speed up for light content.
-- Think NotebookLM podcast style — a knowledgeable friend explaining over coffee.
-- NEVER read monotonically like a GPS or Waze. Vary speed, rhythm, emphasis.`;
+PRONUNCIATION:
+- Modern Israeli Hebrew pronunciation, natural and fluent.
+- English words mixed in: pronounce in English, then continue in Hebrew seamlessly.
+
+DELIVERY STYLE — NATURAL, WARM, FLOWING:
+- Speak like a real Israeli person in a conversation — warm, confident, relaxed.
+- Vary your pitch naturally: rise for questions, drop for conclusions.
+- Emphasize key words. Not every word has the same weight.
+- Use natural pauses at periods and commas — breathe there.
+- Flow smoothly between sentences — no robotic stops or choppy breaks.
+- Think: a warm podcast host reading a script naturally, not a GPS.`;
 
 let currentAudio = null;
 
@@ -1943,9 +1948,10 @@ async function openAiTTS(text) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: state.ttsModel || 'tts-1-hd',
+                model: state.ttsModel || 'gpt-4o-mini-tts',
                 input: text.slice(0, 4096),
                 voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
+                instructions: TTS_HEBREW_INSTRUCTIONS,
             }),
         });
         if (!res.ok) return false;
@@ -1999,9 +2005,10 @@ async function voiceSpeak(text) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                 body: JSON.stringify({
-                    model: state.ttsModel || 'tts-1-hd',
+                    model: state.ttsModel || 'gpt-4o-mini-tts',
                     input: cleanText.slice(0, 4096),
                     voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0,
+                    instructions: TTS_HEBREW_INSTRUCTIONS,
                 }),
             });
             if (res.ok) {
@@ -2180,7 +2187,7 @@ async function speakText(text, button) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({ model: state.ttsModel || 'tts-1-hd', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0 }),
+                body: JSON.stringify({ model: state.ttsModel || 'gpt-4o-mini-tts', input: cleanText.slice(0, 4096), voice: state.ttsVoice || 'nova', speed: state.ttsSpeed || 1.0, instructions: TTS_HEBREW_INSTRUCTIONS }),
             });
             if (res.ok) {
                 const blob = await res.blob();
