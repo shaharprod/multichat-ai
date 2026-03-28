@@ -611,7 +611,8 @@ async function sendMessage(content) {
         }
 
         const allText = conv.messages.map(m => m.content).join(' ');
-        const inputTokens = estimateTokens(allText);
+        const systemPromptTokens = estimateTokens(getSystemPrompt());
+        const inputTokens = estimateTokens(allText) + systemPromptTokens;
 
         // callback שמעדכן את הטקסט בזמן אמת
         let fullResponse = '';
@@ -675,11 +676,21 @@ async function sendMessage(content) {
 
 // ── פורמט Markdown בסיסי ─────────────────────────────────────
 function formatMarkdown(text) {
-    return escapeHtml(text)
+    const codeBlocks = [];
+    let processed = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+        codeBlocks.push(`<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(code.trim())}</code></pre>`);
+        return placeholder;
+    });
+    processed = escapeHtml(processed)
+        .replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`)
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/`(.+?)`/g, '<code>$1</code>')
         .replace(/\n/g, '<br>');
+    codeBlocks.forEach((block, i) => {
+        processed = processed.replace(`__CODE_BLOCK_${i}__`, block);
+    });
+    return processed;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1595,7 +1606,8 @@ async function voiceChatSend(text) {
         if (!apiKey) throw new Error('לא הוגדר מפתח API');
 
         const allText = conv.messages.map(m => m.content).join(' ');
-        const inputTokens = estimateTokens(allText);
+        const systemPromptTokens = estimateTokens(getSystemPrompt());
+        const inputTokens = estimateTokens(allText) + systemPromptTokens;
 
         // ── סטרימינג + TTS לפי משפטים ──
         let fullResponse = '';
@@ -2178,7 +2190,7 @@ async function speakText(text, button) {
     // Fallback: דפדפן TTS
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'he-IL';
-    utterance.rate = state.ttsSpeed || 1.0;
+    utterance.rate = state.ttsSpeed || 1.0;h
     const voices = speechSynthesis.getVoices();
     const heVoice = voices.find(v => v.lang.startsWith('he') && v.name.includes('Google')) || voices.find(v => v.lang.startsWith('he'));
     if (heVoice) utterance.voice = heVoice;
