@@ -1278,6 +1278,7 @@ let restartTimer = null; // טיימר restart
 const MAX_RESTART_ATTEMPTS = 3;
 let micStream = null; // ★ שומר stream פתוח — מונע לופ הרשאות ב-file://
 let micPermissionGranted = false; // ★ דגל הרשאה
+let lastProcessedResultIndex = 0; // ★ מונע כפילות STT
 
 // ── Voice Chat Mode ─────────────────────────────────────────
 let voiceChatActive = false;
@@ -1316,10 +1317,13 @@ function initSpeechRecognition() {
         let finalTranscript = '';
         let interimTranscript = '';
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        // ★ התחל מ-resultIndex (או lastProcessedResultIndex אם גדול יותר) — מונע כפילות
+        const startIdx = Math.max(event.resultIndex, lastProcessedResultIndex);
+        for (let i = startIdx; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
                 finalTranscript += transcript;
+                lastProcessedResultIndex = i + 1; // ★ סמן כמעובד
             } else {
                 interimTranscript += transcript;
             }
@@ -1483,6 +1487,7 @@ function initSpeechRecognition() {
         sttRunning = true;
         micPermissionGranted = true;
         restartAttempts = 0;
+        lastProcessedResultIndex = 0; // ★ איפוס מונה תוצאות — מונע כפילות
         console.log('[MultiChat STT] מאזין ✓');
     };
 
@@ -2054,6 +2059,26 @@ function updateVoiceChatStatus(text) {
 let voiceMuted = false;
 
 function toggleVoiceMute() {
+    // ★ אם AI מדבר — לחיצה על mute קודם עוצרת את הדיבור
+    if (voiceIsSpeaking) {
+        stopCurrentAudio();
+        speechSynthesis.cancel();
+        ttsQueue.length = 0;
+        ttsPlaying = false;
+        voiceIsSpeaking = false;
+        voiceUserInterrupted = true;
+        console.log('[MultiChat] דיבור AI נעצר על ידי המשתמש');
+        // אם כבר מושתק — רק עצור דיבור, לא שנה מצב mute
+        if (voiceMuted) {
+            updateVoiceChatStatus('מיקרופון מושתק 🔇');
+            return;
+        }
+        // אם לא מושתק — עצור דיבור וחזור להאזנה
+        resumeMicAfterSpeaking();
+        updateVoiceChatStatus('מַאֲזִין...');
+        return;
+    }
+
     voiceMuted = !voiceMuted;
     const muteBtn = $('#muteVoiceChatBtn');
 
